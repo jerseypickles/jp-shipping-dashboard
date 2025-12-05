@@ -11,14 +11,14 @@ import {
   FileText,
   Truck,
   MapPin,
-  Check,
   X,
   ExternalLink,
   Image,
   CheckCircle,
-  Clock
+  Clock,
+  MinusSquare
 } from 'lucide-react'
-import { getPrintQueue, getShipments, markLabelsPrinted, getLabelDownloadUrl } from '@/lib/api'
+import { getPrintQueue, getShipments, markLabelsPrinted } from '@/lib/api'
 
 interface Label {
   _id: string;
@@ -53,18 +53,15 @@ export default function LabelsPage() {
       let data;
       
       if (filter === 'to_print') {
-        // Get only label_created status
         data = await getPrintQueue()
         setLabels(data.labels || [])
       } else {
-        // Get from shipments with status filter
         const params: any = { limit: 100 }
         if (filter === 'printed') {
           params.status = 'printed'
         }
         data = await getShipments(params)
         
-        // Transform shipments to label format
         const shipments = data.shipments || []
         setLabels(shipments.filter((s: any) => 
           filter === 'all' 
@@ -104,23 +101,29 @@ export default function LabelsPage() {
   }
 
   function toggleSelectAll() {
-    const selectableLabels = labels.filter(l => l.status === 'label_created')
-    if (selected.size === selectableLabels.length && selectableLabels.length > 0) {
+    if (selected.size === labels.length && labels.length > 0) {
       setSelected(new Set())
     } else {
-      setSelected(new Set(selectableLabels.map(l => l._id)))
+      setSelected(new Set(labels.map(l => l._id)))
     }
   }
 
   async function handleMarkPrinted() {
     if (selected.size === 0) return
     
+    // Only mark labels that are "label_created"
+    const toMark = labels.filter(l => selected.has(l._id) && l.status === 'label_created')
+    if (toMark.length === 0) {
+      setError('No unprinted labels selected')
+      return
+    }
+    
     setMarking(true)
     setError(null)
     
     try {
-      await markLabelsPrinted(Array.from(selected))
-      setSuccess(`Marked ${selected.size} labels as printed`)
+      await markLabelsPrinted(toMark.map(l => l._id))
+      setSuccess(`Marked ${toMark.length} labels as printed`)
       setSelected(new Set())
       await loadLabels()
     } catch (err: any) {
@@ -130,24 +133,58 @@ export default function LabelsPage() {
     }
   }
 
-  async function handlePrintAll() {
-    const toPrint = labels.filter(l => l.status === 'label_created')
-    if (toPrint.length === 0) return
+  async function handleBatchPrint(autoMark: boolean = false) {
+    if (selected.size === 0) return
     
     setDownloading(true)
     setError(null)
     
     try {
-      // Open print page in new window
-      window.open(`${API_BASE}/api/labels/queue/download`, '_blank')
+      const selectedIds = Array.from(selected)
       
-      // Mark all as printed automatically
-      const ids = toPrint.map(l => l._id)
-      await markLabelsPrinted(ids)
+      // Open batch print page with selected IDs via POST form
+      const form = document.createElement('form')
+      form.method = 'POST'
+      form.action = `${API_BASE}/api/labels/batch`
+      form.target = '_blank'
+      form.enctype = 'application/json'
       
-      setSuccess(`Opened ${toPrint.length} labels for printing and marked as printed`)
+      // Create hidden input with JSON data
+      const input = document.createElement('input')
+      input.type = 'hidden'
+      input.name = 'data'
+      input.value = JSON.stringify({ shipmentIds: selectedIds })
+      form.appendChild(input)
+      
+      // Actually we need to use fetch + blob for POST
+      const response = await fetch(`${API_BASE}/api/labels/batch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shipmentIds: selectedIds })
+      })
+      
+      if (!response.ok) throw new Error('Failed to get batch labels')
+      
+      const html = await response.text()
+      const blob = new Blob([html], { type: 'text/html' })
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank')
+      
+      // Auto-mark as printed if requested
+      if (autoMark) {
+        const toMark = labels.filter(l => selected.has(l._id) && l.status === 'label_created')
+        if (toMark.length > 0) {
+          await markLabelsPrinted(toMark.map(l => l._id))
+          setSuccess(`Opened ${selected.size} labels for printing. Marked ${toMark.length} as printed.`)
+          await loadLabels()
+        } else {
+          setSuccess(`Opened ${selected.size} labels for printing.`)
+        }
+      } else {
+        setSuccess(`Opened ${selected.size} labels for printing.`)
+      }
+      
       setSelected(new Set())
-      await loadLabels()
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -155,29 +192,22 @@ export default function LabelsPage() {
     }
   }
 
-  async function handlePrintSelected() {
-    if (selected.size === 0) return
+  async function handlePrintAllQueue() {
+    const toPrint = labels.filter(l => l.status === 'label_created')
+    if (toPrint.length === 0) {
+      setError('No labels to print')
+      return
+    }
     
     setDownloading(true)
     setError(null)
     
     try {
-      // Open each label in new window for printing
-      const selectedLabels = labels.filter(l => selected.has(l._id))
+      window.open(`${API_BASE}/api/labels/queue/download`, '_blank')
       
-      if (selectedLabels.length === 1) {
-        window.open(`${API_BASE}/api/labels/${selectedLabels[0]._id}?format=html`, '_blank')
-      } else {
-        // Open batch print page
-        selectedLabels.forEach(label => {
-          window.open(`${API_BASE}/api/labels/${label._id}?format=html`, '_blank')
-        })
-      }
-      
-      // Mark selected as printed
-      await markLabelsPrinted(Array.from(selected))
-      
-      setSuccess(`Opened ${selected.size} labels for printing and marked as printed`)
+      // Mark all as printed
+      await markLabelsPrinted(toPrint.map(l => l._id))
+      setSuccess(`Opened ${toPrint.length} labels for printing and marked as printed`)
       setSelected(new Set())
       await loadLabels()
     } catch (err: any) {
@@ -191,11 +221,14 @@ export default function LabelsPage() {
     setPreviewLabel(id)
   }
 
-  const toPrintCount = labels.filter(l => l.status === 'label_created').length
-  const printedCount = labels.filter(l => l.status === 'printed').length
+  // Selection state
+  const allSelected = labels.length > 0 && selected.size === labels.length
+  const someSelected = selected.size > 0 && selected.size < labels.length
+  const selectedToPrint = labels.filter(l => selected.has(l._id) && l.status === 'label_created').length
+  const selectedPrinted = labels.filter(l => selected.has(l._id) && l.status === 'printed').length
 
   const filters = [
-    { value: 'to_print', label: `To Print (${filter === 'to_print' ? labels.length : '?'})`, icon: Clock },
+    { value: 'to_print', label: 'To Print', icon: Clock },
     { value: 'printed', label: 'Printed', icon: CheckCircle },
     { value: 'all', label: 'All Labels', icon: FileText },
   ]
@@ -223,7 +256,7 @@ export default function LabelsPage() {
           </button>
           {filter === 'to_print' && labels.length > 0 && (
             <button
-              onClick={handlePrintAll}
+              onClick={handlePrintAllQueue}
               disabled={downloading}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
@@ -278,23 +311,65 @@ export default function LabelsPage() {
 
       {/* Action Bar */}
       {selected.size > 0 && (
-        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl flex items-center justify-between">
-          <span className="font-medium text-blue-800">
-            {selected.size} label{selected.size > 1 ? 's' : ''} selected
-          </span>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handlePrintSelected}
-              disabled={downloading}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-            >
-              {downloading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Printer className="w-4 h-4" />
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="font-medium text-blue-800">
+                {selected.size} label{selected.size > 1 ? 's' : ''} selected
+              </span>
+              {(selectedToPrint > 0 || selectedPrinted > 0) && (
+                <span className="text-sm text-blue-600 ml-2">
+                  ({selectedToPrint} to print, {selectedPrinted} already printed)
+                </span>
               )}
-              Print & Mark as Printed
-            </button>
+            </div>
+            <div className="flex items-center gap-3">
+              {/* Print Selected (opens in new window) */}
+              <button
+                onClick={() => handleBatchPrint(false)}
+                disabled={downloading}
+                className="flex items-center gap-2 px-4 py-2 bg-white border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 transition-colors disabled:opacity-50"
+              >
+                {downloading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Printer className="w-4 h-4" />
+                )}
+                Print Selected ({selected.size})
+              </button>
+              
+              {/* Print & Mark (only if there are unprinted labels) */}
+              {selectedToPrint > 0 && (
+                <button
+                  onClick={() => handleBatchPrint(true)}
+                  disabled={downloading}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  {downloading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Printer className="w-4 h-4" />
+                  )}
+                  Print & Mark ({selectedToPrint})
+                </button>
+              )}
+              
+              {/* Just Mark as Printed (without opening print window) */}
+              {selectedToPrint > 0 && (
+                <button
+                  onClick={handleMarkPrinted}
+                  disabled={marking}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
+                >
+                  {marking ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4" />
+                  )}
+                  Mark Printed
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -325,17 +400,17 @@ export default function LabelsPage() {
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  {filter === 'to_print' && (
-                    <th className="px-4 py-3 text-left w-12">
-                      <button onClick={toggleSelectAll} className="p-1 hover:bg-gray-200 rounded">
-                        {selected.size === labels.filter(l => l.status === 'label_created').length && labels.length > 0 ? (
-                          <CheckSquare className="w-5 h-5 text-blue-600" />
-                        ) : (
-                          <Square className="w-5 h-5 text-gray-400" />
-                        )}
-                      </button>
-                    </th>
-                  )}
+                  <th className="px-4 py-3 text-left w-12">
+                    <button onClick={toggleSelectAll} className="p-1 hover:bg-gray-200 rounded">
+                      {allSelected ? (
+                        <CheckSquare className="w-5 h-5 text-blue-600" />
+                      ) : someSelected ? (
+                        <MinusSquare className="w-5 h-5 text-blue-600" />
+                      ) : (
+                        <Square className="w-5 h-5 text-gray-400" />
+                      )}
+                    </button>
+                  </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Order</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Tracking</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Customer</th>
@@ -349,28 +424,25 @@ export default function LabelsPage() {
               <tbody className="divide-y divide-gray-200">
                 {labels.map((label) => {
                   const isPrinted = label.status === 'printed'
+                  const isSelected = selected.has(label._id)
                   
                   return (
                     <tr 
                       key={label._id}
-                      className={`hover:bg-gray-50 ${selected.has(label._id) ? 'bg-blue-50' : ''}`}
+                      className={`hover:bg-gray-50 ${isSelected ? 'bg-blue-50' : ''}`}
                     >
-                      {filter === 'to_print' && (
-                        <td className="px-4 py-4">
-                          {!isPrinted && (
-                            <button 
-                              onClick={() => toggleSelect(label._id)}
-                              className="p-1 hover:bg-gray-200 rounded"
-                            >
-                              {selected.has(label._id) ? (
-                                <CheckSquare className="w-5 h-5 text-blue-600" />
-                              ) : (
-                                <Square className="w-5 h-5 text-gray-400" />
-                              )}
-                            </button>
+                      <td className="px-4 py-4">
+                        <button 
+                          onClick={() => toggleSelect(label._id)}
+                          className="p-1 hover:bg-gray-200 rounded"
+                        >
+                          {isSelected ? (
+                            <CheckSquare className="w-5 h-5 text-blue-600" />
+                          ) : (
+                            <Square className="w-5 h-5 text-gray-400" />
                           )}
-                        </td>
-                      )}
+                        </button>
+                      </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-2">
                           <FileText className="w-4 h-4 text-gray-400" />
@@ -470,6 +542,7 @@ export default function LabelsPage() {
                 src={`${API_BASE}/api/labels/${previewLabel}`}
                 alt="Shipping Label"
                 className="max-w-full mx-auto border border-gray-200 rounded shadow-sm"
+                style={{ transform: 'rotate(90deg)', maxHeight: '300px' }}
               />
             </div>
             <div className="p-4 border-t flex justify-end gap-3">
@@ -497,13 +570,14 @@ export default function LabelsPage() {
 
       {/* Instructions */}
       <div className="mt-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
-        <h4 className="font-medium text-gray-900 mb-2">📋 How to print labels:</h4>
-        <ol className="text-sm text-gray-600 space-y-1 list-decimal list-inside">
-          <li>Select labels or click <strong>&quot;Print All&quot;</strong></li>
-          <li>A print window will open - use Ctrl+P / Cmd+P to print</li>
-          <li>Labels are automatically marked as &quot;Printed&quot; after downloading</li>
-          <li>Use filters to view printed vs pending labels</li>
-        </ol>
+        <h4 className="font-medium text-gray-900 mb-2">📋 How to use:</h4>
+        <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
+          <li><strong>Select labels</strong> using checkboxes (click header checkbox to select all)</li>
+          <li><strong>Print Selected</strong> - Opens batch print window (doesn&apos;t mark as printed)</li>
+          <li><strong>Print &amp; Mark</strong> - Opens print window AND marks unprinted labels as printed</li>
+          <li><strong>Mark Printed</strong> - Just marks as printed without opening print window</li>
+          <li>Use filters to view <strong>To Print</strong>, <strong>Printed</strong>, or <strong>All</strong> labels</li>
+        </ul>
       </div>
     </div>
   )

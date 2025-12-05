@@ -32,11 +32,12 @@ interface Shipment {
 }
 
 const statusConfig: Record<string, { icon: any; color: string; label: string }> = {
-  label_created: { icon: Clock, color: 'bg-gray-100 text-gray-700', label: 'Label Created' },
-  printed: { icon: Package, color: 'bg-blue-100 text-blue-700', label: 'Printed' },
-  shipped: { icon: Truck, color: 'bg-blue-100 text-blue-700', label: 'Shipped' },
+  pending: { icon: Clock, color: 'bg-gray-100 text-gray-700', label: 'Pending' },
+  label_created: { icon: Package, color: 'bg-blue-100 text-blue-700', label: 'Label Created' },
+  printed: { icon: Package, color: 'bg-indigo-100 text-indigo-700', label: 'Printed' },
+  shipped: { icon: Truck, color: 'bg-purple-100 text-purple-700', label: 'Picked Up' },
   in_transit: { icon: Truck, color: 'bg-yellow-100 text-yellow-700', label: 'In Transit' },
-  out_for_delivery: { icon: Truck, color: 'bg-green-100 text-green-700', label: 'Out for Delivery' },
+  out_for_delivery: { icon: Truck, color: 'bg-orange-100 text-orange-700', label: 'Out for Delivery' },
   delivered: { icon: CheckCircle, color: 'bg-green-100 text-green-700', label: 'Delivered' },
   exception: { icon: AlertCircle, color: 'bg-red-100 text-red-700', label: 'Exception' },
   voided: { icon: XCircle, color: 'bg-gray-100 text-gray-500', label: 'Voided' },

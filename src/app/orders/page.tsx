@@ -151,31 +151,48 @@ export default function OrdersPage() {
           throw new Error('Order missing shipping address')
         }
         
-        const rateData = await getRates({
-          orderNumber: order.orderNumber,
-          shipTo: order.shipTo,
-          package: order.package || { weight: 1, length: 12, width: 10, height: 8 }
-        })
+        // Send the full order object - backend will extract what it needs
+        const rateData = await getRates(order)
         
-        console.log('[GetRates] Response:', rateData)
+        console.log('[GetRates] Full response:', JSON.stringify(rateData, null, 2))
         
-        // Find Ground rate (03) or cheapest
-        const rates = Array.isArray(rateData) ? rateData : []
-        const groundRate = rates.find((r: any) => r.service === '03' || r.serviceCode === '03')
-        const cheapestRate = rates[0]
-        const selectedRate = groundRate || cheapestRate
+        // Handle different response formats
+        let ratesArray: any[] = []
+        if (Array.isArray(rateData)) {
+          ratesArray = rateData
+        } else if (rateData?.rates && Array.isArray(rateData.rates)) {
+          ratesArray = rateData.rates
+        } else if (rateData?.RatedShipment) {
+          ratesArray = rateData.RatedShipment
+        }
         
-        if (!selectedRate) {
+        console.log('[GetRates] Parsed rates array:', ratesArray.length, 'rates')
+        
+        if (ratesArray.length === 0) {
           throw new Error('No rates returned')
         }
         
-        // Parse the amount - could be in different formats
+        // Find Ground rate (03) or cheapest
+        const groundRate = ratesArray.find((r: any) => 
+          r.service === '03' || 
+          r.serviceCode === '03' || 
+          r.Service?.Code === '03'
+        )
+        const selectedRate = groundRate || ratesArray[0]
+        
+        console.log('[GetRates] Selected rate:', selectedRate)
+        
+        // Parse the amount - handle different formats
         let amountCents = 0
         if (selectedRate.amountCents) {
           amountCents = selectedRate.amountCents
         } else if (selectedRate.amount) {
           amountCents = Math.round(selectedRate.amount * 100)
+        } else if (selectedRate.TotalCharges?.MonetaryValue) {
+          amountCents = Math.round(parseFloat(selectedRate.TotalCharges.MonetaryValue) * 100)
         }
+        
+        console.log('[GetRates] Amount cents:', amountCents)
         
         setRates(prev => ({
           ...prev,

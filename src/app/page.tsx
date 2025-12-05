@@ -10,7 +10,8 @@ import {
   ArrowRight,
   RefreshCw,
   Truck,
-  Clock
+  Clock,
+  BarChart3
 } from 'lucide-react'
 import { getDashboard, getWalletSummary, getFulfillmentStatus } from '@/lib/api'
 
@@ -212,7 +213,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         {/* Today's Activity */}
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Today's Activity</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Today&apos;s Activity</h2>
           <div className="space-y-4">
             <div className="flex items-center justify-between py-3 border-b border-gray-100">
               <div className="flex items-center gap-3">
@@ -243,9 +244,9 @@ export default function Dashboard() {
                 </div>
                 <span className="text-gray-700">Fulfillment Status</span>
               </div>
-              <span className={`badge ${
-                fulfillment?.level === 'normal' ? 'badge-success' :
-                fulfillment?.level === 'busy' ? 'badge-warning' : 'badge-error'
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                fulfillment?.level === 'normal' ? 'bg-green-100 text-green-800' :
+                fulfillment?.level === 'busy' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
               }`}>
                 {fulfillment?.level || 'Unknown'}
               </span>
@@ -259,10 +260,10 @@ export default function Dashboard() {
           <div className="grid grid-cols-2 gap-4">
             <Link
               href="/orders"
-              className="flex flex-col items-center justify-center p-6 bg-pickle-50 rounded-xl hover:bg-pickle-100 transition-colors"
+              className="flex flex-col items-center justify-center p-6 bg-green-50 rounded-xl hover:bg-green-100 transition-colors"
             >
-              <Package className="w-8 h-8 text-pickle-600 mb-2" />
-              <span className="font-medium text-pickle-700">Ship Orders</span>
+              <Package className="w-8 h-8 text-green-600 mb-2" />
+              <span className="font-medium text-green-700">Ship Orders</span>
             </Link>
             <Link
               href="/labels"
@@ -290,7 +291,7 @@ export default function Dashboard() {
       </div>
 
       {/* Week Summary */}
-      <div className="bg-gradient-to-r from-pickle-600 to-pickle-700 rounded-xl p-6 text-white">
+      <div className="bg-gradient-to-r from-green-600 to-green-700 rounded-xl p-6 text-white">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold opacity-90">Weekly Summary</h2>

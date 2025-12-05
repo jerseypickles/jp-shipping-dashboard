@@ -54,6 +54,12 @@ interface Order {
   items: OrderItem[];
   totals: {
     total: string;
+    shipping?: string;
+  };
+  shippingPaid?: {
+    amount: string;
+    method: string;
+    code?: string;
   };
 }
 
@@ -311,6 +317,13 @@ export default function OrdersPage() {
     return sum + (rate?.rate || 0)
   }, 0)
   
+  // Calculate total shipping paid by customers and profit
+  const totalCustomerPaid = selectedOrders.reduce((sum, o) => {
+    return sum + (parseFloat(o.shippingPaid?.amount || '0') * 100)
+  }, 0)
+  
+  const totalProfit = totalCustomerPaid - totalEstimatedCost
+  
   const hasAllRates = selectedOrders.length > 0 && selectedOrders.every(o => rates[o.shopifyOrderId]?.rate !== undefined)
 
   return (
@@ -414,7 +427,17 @@ export default function OrdersPage() {
                 {totalEstimatedCost > 0 && (
                   <span className="flex items-center gap-1 font-semibold text-green-700 bg-green-100 px-2 py-1 rounded">
                     <DollarSign className="w-4 h-4" />
-                    Est: ${(totalEstimatedCost / 100).toFixed(2)}
+                    Cost: ${(totalEstimatedCost / 100).toFixed(2)}
+                  </span>
+                )}
+                {hasAllRates && totalCustomerPaid > 0 && (
+                  <span className={`flex items-center gap-1 font-semibold px-2 py-1 rounded ${
+                    totalProfit >= 0 
+                      ? 'text-green-700 bg-green-100' 
+                      : 'text-red-700 bg-red-100'
+                  }`}>
+                    {totalProfit >= 0 ? '📈' : '📉'}
+                    {totalProfit >= 0 ? '+' : '-'}${Math.abs(totalProfit / 100).toFixed(2)} {totalProfit >= 0 ? 'profit' : 'loss'}
                   </span>
                 )}
               </div>
@@ -486,7 +509,10 @@ export default function OrdersPage() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Weight</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Items</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Order $</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase bg-blue-50">Ship Rate</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase bg-blue-50">
+                    <div>UPS Rate</div>
+                    <div className="font-normal text-gray-400 normal-case">vs Customer Paid</div>
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -571,9 +597,37 @@ export default function OrdersPage() {
                           <div>
                             <span className="font-bold text-green-600 text-lg">{orderRate.rateFormatted}</span>
                             <div className="text-xs text-gray-500">{orderRate.service}</div>
+                            {/* Show comparison with what customer paid */}
+                            {order.shippingPaid && (
+                              <div className="mt-1 pt-1 border-t border-blue-200">
+                                <div className="text-xs text-gray-600">
+                                  Paid: <span className="font-semibold">${parseFloat(order.shippingPaid.amount || '0').toFixed(2)}</span>
+                                </div>
+                                {(() => {
+                                  const paid = parseFloat(order.shippingPaid.amount || '0') * 100;
+                                  const cost = orderRate.rate || 0;
+                                  const diff = paid - cost;
+                                  const diffFormatted = `$${Math.abs(diff / 100).toFixed(2)}`;
+                                  if (diff > 0) {
+                                    return <div className="text-xs font-semibold text-green-600">+{diffFormatted} profit</div>;
+                                  } else if (diff < 0) {
+                                    return <div className="text-xs font-semibold text-red-600">-{diffFormatted} loss</div>;
+                                  }
+                                  return <div className="text-xs text-gray-500">Break even</div>;
+                                })()}
+                              </div>
+                            )}
                           </div>
                         ) : hasShipTo ? (
-                          <span className="text-gray-400 text-sm">Click &quot;Get Rates&quot;</span>
+                          <div>
+                            <span className="text-gray-400 text-sm">Get Rates</span>
+                            {/* Still show what customer paid even without rate */}
+                            {order.shippingPaid && parseFloat(order.shippingPaid.amount || '0') > 0 && (
+                              <div className="mt-1 text-xs text-gray-500">
+                                Paid: ${parseFloat(order.shippingPaid.amount).toFixed(2)}
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-red-400 text-sm">N/A</span>
                         )}

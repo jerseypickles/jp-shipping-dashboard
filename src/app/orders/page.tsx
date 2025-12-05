@@ -13,7 +13,11 @@ import {
   DollarSign,
   AlertCircle,
   CheckCircle,
-  Calculator
+  Calculator,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight
 } from 'lucide-react'
 import { getUnfulfilledOrders, buyLabel, buyBatchLabels, getRates } from '@/lib/api'
 
@@ -53,6 +57,15 @@ interface Order {
   };
 }
 
+interface Pagination {
+  page: number;
+  perPage: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrev: boolean;
+}
+
 interface RateInfo {
   loading: boolean;
   rate?: number;
@@ -70,6 +83,7 @@ interface ShipResult {
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([])
+  const [pagination, setPagination] = useState<Pagination | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [shipping, setShipping] = useState(false)
@@ -77,22 +91,25 @@ export default function OrdersPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [shipResults, setShipResults] = useState<ShipResult[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
+  const perPage = 100
   
   // Rates per order
   const [rates, setRates] = useState<Record<string, RateInfo>>({})
 
-  async function loadOrders() {
+  async function loadOrders(page: number = 1, refresh: boolean = false) {
     setLoading(true)
     setError(null)
     
     try {
-      const data = await getUnfulfilledOrders(100)
-      console.log('[Orders] Loaded:', data.orders?.length, 'orders')
-      if (data.orders?.[0]) {
-        console.log('[Orders] Sample order:', JSON.stringify(data.orders[0], null, 2))
-      }
+      const data = await getUnfulfilledOrders({ page, perPage, refresh })
+      console.log('[Orders] Loaded:', data.orders?.length, 'orders, page', page, 'of', data.pagination?.totalPages)
       setOrders(data.orders || [])
-      setRates({}) // Reset rates when reloading
+      setPagination(data.pagination || null)
+      setCurrentPage(page)
+      if (refresh) {
+        setRates({}) // Reset rates when refreshing
+      }
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -101,7 +118,7 @@ export default function OrdersPage() {
   }
 
   useEffect(() => {
-    loadOrders()
+    loadOrders(1)
   }, [])
 
   function toggleSelect(orderId: string) {
@@ -141,22 +158,12 @@ export default function OrdersPage() {
     // Fetch rates one by one
     for (const order of selectedOrders) {
       try {
-        // Log what we're sending
-        console.log('[GetRates] Sending for order:', order.orderNumber)
-        console.log('[GetRates] shipTo:', order.shipTo)
-        console.log('[GetRates] package:', order.package)
-        
-        // Check if shipTo exists
         if (!order.shipTo || !order.shipTo.zip) {
           throw new Error('Order missing shipping address')
         }
         
-        // Send the full order object - backend will extract what it needs
         const rateData = await getRates(order)
         
-        console.log('[GetRates] Full response:', JSON.stringify(rateData, null, 2))
-        
-        // Handle different response formats
         let ratesArray: any[] = []
         if (Array.isArray(rateData)) {
           ratesArray = rateData
@@ -166,13 +173,10 @@ export default function OrdersPage() {
           ratesArray = rateData.RatedShipment
         }
         
-        console.log('[GetRates] Parsed rates array:', ratesArray.length, 'rates')
-        
         if (ratesArray.length === 0) {
           throw new Error('No rates returned')
         }
         
-        // Find Ground rate (03) or cheapest
         const groundRate = ratesArray.find((r: any) => 
           r.service === '03' || 
           r.serviceCode === '03' || 
@@ -180,9 +184,6 @@ export default function OrdersPage() {
         )
         const selectedRate = groundRate || ratesArray[0]
         
-        console.log('[GetRates] Selected rate:', selectedRate)
-        
-        // Parse the amount - handle different formats
         let amountCents = 0
         if (selectedRate.amountCents) {
           amountCents = selectedRate.amountCents
@@ -191,8 +192,6 @@ export default function OrdersPage() {
         } else if (selectedRate.TotalCharges?.MonetaryValue) {
           amountCents = Math.round(parseFloat(selectedRate.TotalCharges.MonetaryValue) * 100)
         }
-        
-        console.log('[GetRates] Amount cents:', amountCents)
         
         setRates(prev => ({
           ...prev,
@@ -204,7 +203,6 @@ export default function OrdersPage() {
           }
         }))
       } catch (err: any) {
-        console.error('[GetRates] Error for', order.orderNumber, ':', err.message)
         setRates(prev => ({
           ...prev,
           [order.shopifyOrderId]: {
@@ -230,13 +228,8 @@ export default function OrdersPage() {
       const selectedOrders = orders.filter(o => selected.has(o.shopifyOrderId))
       
       if (selectedOrders.length === 1) {
-        // Single order - send the full order object
         const order = selectedOrders[0]
-        console.log('[Ship] Sending order:', order.orderNumber)
-        
         const result = await buyLabel(order)
-        
-        console.log('[Ship] Result:', result)
         
         const cost = result.cost?.formatted || 
                      (result.cost?.amount ? `$${(result.cost.amount / 100).toFixed(2)}` : 
@@ -254,12 +247,8 @@ export default function OrdersPage() {
           `Cost: ${cost}`
         )
       } else {
-        // Batch orders
         const result = await buyBatchLabels(selectedOrders)
         
-        console.log('[Ship Batch] Result:', result)
-        
-        // Map results
         const results: ShipResult[] = []
         
         if (result.successful) {
@@ -295,14 +284,21 @@ export default function OrdersPage() {
       }
       
       // Refresh orders
-      await loadOrders()
+      await loadOrders(currentPage, true)
       setSelected(new Set())
       
     } catch (err: any) {
-      console.error('[Ship] Error:', err)
       setError(err.message)
     } finally {
       setShipping(false)
+    }
+  }
+
+  // Pagination handlers
+  function goToPage(page: number) {
+    if (page >= 1 && page <= (pagination?.totalPages || 1)) {
+      setSelected(new Set()) // Clear selection when changing pages
+      loadOrders(page)
     }
   }
 
@@ -310,7 +306,6 @@ export default function OrdersPage() {
   const totalWeight = selectedOrders.reduce((sum, o) => sum + (o.package?.weight || 0), 0)
   const totalItems = selectedOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0)
   
-  // Calculate total estimated cost from rates
   const totalEstimatedCost = selectedOrders.reduce((sum, o) => {
     const rate = rates[o.shopifyOrderId]
     return sum + (rate?.rate || 0)
@@ -324,10 +319,13 @@ export default function OrdersPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Pending Orders</h1>
-          <p className="text-gray-500 mt-1">{orders.length} orders ready to ship</p>
+          <p className="text-gray-500 mt-1">
+            {pagination ? `${pagination.total} orders total` : `${orders.length} orders`}
+            {pagination && pagination.totalPages > 1 && ` • Page ${pagination.page} of ${pagination.totalPages}`}
+          </p>
         </div>
         <button
-          onClick={loadOrders}
+          onClick={() => loadOrders(1, true)}
           disabled={loading}
           className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
         >
@@ -352,7 +350,6 @@ export default function OrdersPage() {
             <div className="text-green-700 whitespace-pre-line">{success}</div>
           </div>
           
-          {/* Ship Results Table */}
           {shipResults.length > 0 && (
             <div className="mt-4 bg-white rounded-lg border border-green-200 overflow-hidden">
               <table className="w-full text-sm">
@@ -423,7 +420,6 @@ export default function OrdersPage() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              {/* Get Rates Button */}
               <button
                 onClick={handleGetRates}
                 disabled={gettingRates || shipping}
@@ -437,7 +433,6 @@ export default function OrdersPage() {
                 {gettingRates ? 'Getting Rates...' : 'Get Rates'}
               </button>
               
-              {/* Ship Button */}
               <button
                 onClick={handleShipSelected}
                 disabled={shipping || gettingRates}
@@ -591,6 +586,87 @@ export default function OrdersPage() {
           </div>
         )}
       </div>
+
+      {/* Pagination */}
+      {pagination && pagination.totalPages > 1 && (
+        <div className="mt-6 flex items-center justify-between">
+          <div className="text-sm text-gray-600">
+            Showing {((pagination.page - 1) * pagination.perPage) + 1} - {Math.min(pagination.page * pagination.perPage, pagination.total)} of {pagination.total} orders
+          </div>
+          <div className="flex items-center gap-2">
+            {/* First */}
+            <button
+              onClick={() => goToPage(1)}
+              disabled={!pagination.hasPrev || loading}
+              className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="First page"
+            >
+              <ChevronsLeft className="w-4 h-4" />
+            </button>
+            
+            {/* Previous */}
+            <button
+              onClick={() => goToPage(pagination.page - 1)}
+              disabled={!pagination.hasPrev || loading}
+              className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Previous page"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            
+            {/* Page numbers */}
+            <div className="flex items-center gap-1">
+              {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                let pageNum;
+                if (pagination.totalPages <= 5) {
+                  pageNum = i + 1;
+                } else if (pagination.page <= 3) {
+                  pageNum = i + 1;
+                } else if (pagination.page >= pagination.totalPages - 2) {
+                  pageNum = pagination.totalPages - 4 + i;
+                } else {
+                  pageNum = pagination.page - 2 + i;
+                }
+                
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => goToPage(pageNum)}
+                    disabled={loading}
+                    className={`w-10 h-10 rounded-lg font-medium transition-colors ${
+                      pageNum === pagination.page
+                        ? 'bg-pickle-600 text-white'
+                        : 'border border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+            </div>
+            
+            {/* Next */}
+            <button
+              onClick={() => goToPage(pagination.page + 1)}
+              disabled={!pagination.hasNext || loading}
+              className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Next page"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+            
+            {/* Last */}
+            <button
+              onClick={() => goToPage(pagination.totalPages)}
+              disabled={!pagination.hasNext || loading}
+              className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Last page"
+            >
+              <ChevronsRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
       
       {/* Instructions */}
       <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -599,7 +675,7 @@ export default function OrdersPage() {
           <li>Select orders using checkboxes</li>
           <li>Click <strong>&quot;Get Rates&quot;</strong> to see UPS shipping cost</li>
           <li>Review rates in blue &quot;Ship Rate&quot; column</li>
-          <li>Click <strong>&quot;Ship&quot;</strong> to create labels and charge to UPS account</li>
+          <li>Click <strong>&quot;Ship&quot;</strong> to create labels</li>
         </ol>
       </div>
     </div>

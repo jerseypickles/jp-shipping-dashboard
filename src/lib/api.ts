@@ -60,8 +60,17 @@ export async function getDashboard() {
   return fetchAPI('/api/shipping/dashboard');
 }
 
-export async function getUnfulfilledOrders(limit = 50) {
-  return fetchAPI(`/api/shipping/orders?limit=${limit}`);
+export async function getUnfulfilledOrders(params?: {
+  page?: number;
+  perPage?: number;
+  refresh?: boolean;
+}) {
+  const query = new URLSearchParams();
+  if (params?.page) query.append('page', params.page.toString());
+  if (params?.perPage) query.append('perPage', params.perPage.toString());
+  if (params?.refresh) query.append('refresh', '1');
+  
+  return fetchAPI(`/api/shipping/orders?${query}`);
 }
 
 export async function getShipments(params?: {

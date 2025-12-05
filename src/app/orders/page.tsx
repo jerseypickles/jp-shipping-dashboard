@@ -87,6 +87,10 @@ export default function OrdersPage() {
     
     try {
       const data = await getUnfulfilledOrders(100)
+      console.log('[Orders] Loaded:', data.orders?.length, 'orders')
+      if (data.orders?.[0]) {
+        console.log('[Orders] Sample order:', JSON.stringify(data.orders[0], null, 2))
+      }
       setOrders(data.orders || [])
       setRates({}) // Reset rates when reloading
     } catch (err: any) {
@@ -137,29 +141,53 @@ export default function OrdersPage() {
     // Fetch rates one by one
     for (const order of selectedOrders) {
       try {
+        // Log what we're sending
+        console.log('[GetRates] Sending for order:', order.orderNumber)
+        console.log('[GetRates] shipTo:', order.shipTo)
+        console.log('[GetRates] package:', order.package)
+        
+        // Check if shipTo exists
+        if (!order.shipTo || !order.shipTo.zip) {
+          throw new Error('Order missing shipping address')
+        }
+        
         const rateData = await getRates({
           orderNumber: order.orderNumber,
           shipTo: order.shipTo,
-          package: order.package
+          package: order.package || { weight: 1, length: 12, width: 10, height: 8 }
         })
         
+        console.log('[GetRates] Response:', rateData)
+        
         // Find Ground rate (03) or cheapest
-        const groundRate = rateData.find((r: any) => r.service === '03' || r.serviceCode === '03')
-        const cheapestRate = rateData[0]
+        const rates = Array.isArray(rateData) ? rateData : []
+        const groundRate = rates.find((r: any) => r.service === '03' || r.serviceCode === '03')
+        const cheapestRate = rates[0]
         const selectedRate = groundRate || cheapestRate
+        
+        if (!selectedRate) {
+          throw new Error('No rates returned')
+        }
+        
+        // Parse the amount - could be in different formats
+        let amountCents = 0
+        if (selectedRate.amountCents) {
+          amountCents = selectedRate.amountCents
+        } else if (selectedRate.amount) {
+          amountCents = Math.round(selectedRate.amount * 100)
+        }
         
         setRates(prev => ({
           ...prev,
           [order.shopifyOrderId]: {
             loading: false,
-            rate: selectedRate?.amountCents || selectedRate?.amount * 100,
-            rateFormatted: selectedRate?.amount 
-              ? `$${selectedRate.amount.toFixed(2)}`
-              : `$${((selectedRate?.amountCents || 0) / 100).toFixed(2)}`,
-            service: selectedRate?.serviceName || 'UPS Ground'
+            rate: amountCents,
+            rateFormatted: `$${(amountCents / 100).toFixed(2)}`,
+            service: selectedRate.serviceName || selectedRate.service || 'UPS Ground'
           }
         }))
       } catch (err: any) {
+        console.error('[GetRates] Error for', order.orderNumber, ':', err.message)
         setRates(prev => ({
           ...prev,
           [order.shopifyOrderId]: {
@@ -185,26 +213,34 @@ export default function OrdersPage() {
       const selectedOrders = orders.filter(o => selected.has(o.shopifyOrderId))
       
       if (selectedOrders.length === 1) {
-        // Single order
-        const result = await buyLabel(selectedOrders[0])
+        // Single order - send the full order object
+        const order = selectedOrders[0]
+        console.log('[Ship] Sending order:', order.orderNumber)
+        
+        const result = await buyLabel(order)
+        
+        console.log('[Ship] Result:', result)
         
         const cost = result.cost?.formatted || 
-                     (result.cost?.amount ? `$${(result.cost.amount / 100).toFixed(2)}` : '$0.00')
+                     (result.cost?.amount ? `$${(result.cost.amount / 100).toFixed(2)}` : 
+                      result.charges?.total ? `$${(result.charges.total / 100).toFixed(2)}` : 'N/A')
         
         setShipResults([{
-          orderNumber: selectedOrders[0].orderNumber,
-          trackingNumber: result.tracking?.number || result.shipment?.trackingNumber,
+          orderNumber: order.orderNumber,
+          trackingNumber: result.tracking?.number || result.trackingNumber || result.shipment?.trackingNumber,
           cost: cost
         }])
         
         setSuccess(
-          `✓ Label created for ${selectedOrders[0].orderNumber}\n` +
-          `Tracking: ${result.tracking?.number || result.shipment?.trackingNumber}\n` +
+          `✓ Label created for ${order.orderNumber}\n` +
+          `Tracking: ${result.tracking?.number || result.trackingNumber || result.shipment?.trackingNumber}\n` +
           `Cost: ${cost}`
         )
       } else {
         // Batch orders
         const result = await buyBatchLabels(selectedOrders)
+        
+        console.log('[Ship Batch] Result:', result)
         
         // Map results
         const results: ShipResult[] = []
@@ -246,6 +282,7 @@ export default function OrdersPage() {
       setSelected(new Set())
       
     } catch (err: any) {
+      console.error('[Ship] Error:', err)
       setError(err.message)
     } finally {
       setShipping(false)
@@ -262,8 +299,7 @@ export default function OrdersPage() {
     return sum + (rate?.rate || 0)
   }, 0)
   
-  const hasAllRates = selectedOrders.every(o => rates[o.shopifyOrderId]?.rate !== undefined)
-  const someRatesLoading = selectedOrders.some(o => rates[o.shopifyOrderId]?.loading)
+  const hasAllRates = selectedOrders.length > 0 && selectedOrders.every(o => rates[o.shopifyOrderId]?.rate !== undefined)
 
   return (
     <div className="p-8">
@@ -362,9 +398,9 @@ export default function OrdersPage() {
                   {totalItems} items
                 </span>
                 {totalEstimatedCost > 0 && (
-                  <span className="flex items-center gap-1 font-semibold text-pickle-800">
+                  <span className="flex items-center gap-1 font-semibold text-green-700 bg-green-100 px-2 py-1 rounded">
                     <DollarSign className="w-4 h-4" />
-                    Est. Total: ${(totalEstimatedCost / 100).toFixed(2)}
+                    Est: ${(totalEstimatedCost / 100).toFixed(2)}
                   </span>
                 )}
               </div>
@@ -395,7 +431,7 @@ export default function OrdersPage() {
                 ) : (
                   <Truck className="w-4 h-4" />
                 )}
-                {shipping ? 'Creating Labels...' : `Ship ${selected.size} Order${selected.size > 1 ? 's' : ''}`}
+                {shipping ? 'Creating...' : `Ship ${selected.size}`}
                 {hasAllRates && totalEstimatedCost > 0 && (
                   <span className="ml-1">(${(totalEstimatedCost / 100).toFixed(2)})</span>
                 )}
@@ -432,18 +468,19 @@ export default function OrdersPage() {
                       )}
                     </button>
                   </th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Order</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Customer</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Destination</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Weight</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Items</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Order Total</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Ship Rate</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Order</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Customer</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Destination</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Weight</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Items</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Order $</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase bg-blue-50">Ship Rate</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {orders.map((order) => {
                   const orderRate = rates[order.shopifyOrderId]
+                  const hasShipTo = order.shipTo && order.shipTo.zip
                   
                   return (
                     <tr 
@@ -475,22 +512,26 @@ export default function OrdersPage() {
                       </td>
                       <td className="px-4 py-4">
                         <div className="font-medium text-gray-900">{order.customer?.name || 'N/A'}</div>
-                        <div className="text-xs text-gray-500 mt-1 truncate max-w-[180px]">
+                        <div className="text-xs text-gray-500 mt-1 truncate max-w-[150px]">
                           {order.customer?.email || ''}
                         </div>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="flex items-start gap-2">
-                          <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
-                          <div>
-                            <div className="text-gray-900">
-                              {order.shipTo?.city}, {order.shipTo?.state}
-                            </div>
-                            <div className="text-xs text-gray-500 mt-1">
-                              {order.shipTo?.zip}
+                        {hasShipTo ? (
+                          <div className="flex items-start gap-2">
+                            <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                            <div>
+                              <div className="text-gray-900">
+                                {order.shipTo.city}, {order.shipTo.state}
+                              </div>
+                              <div className="text-xs text-gray-500 mt-1">
+                                {order.shipTo.zip}
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        ) : (
+                          <span className="text-red-500 text-sm">No address</span>
+                        )}
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-2">
@@ -506,21 +547,23 @@ export default function OrdersPage() {
                       <td className="px-4 py-4">
                         <span className="font-medium text-gray-900">${order.totals?.total || '0.00'}</span>
                       </td>
-                      <td className="px-4 py-4">
+                      <td className="px-4 py-4 bg-blue-50">
                         {orderRate?.loading ? (
                           <div className="flex items-center gap-2 text-gray-400">
                             <Loader2 className="w-4 h-4 animate-spin" />
-                            <span className="text-sm">Loading...</span>
+                            <span className="text-sm">...</span>
                           </div>
                         ) : orderRate?.error ? (
-                          <span className="text-xs text-red-500">{orderRate.error}</span>
+                          <span className="text-xs text-red-500" title={orderRate.error}>Error</span>
                         ) : orderRate?.rateFormatted ? (
                           <div>
-                            <span className="font-semibold text-green-600">{orderRate.rateFormatted}</span>
+                            <span className="font-bold text-green-600 text-lg">{orderRate.rateFormatted}</span>
                             <div className="text-xs text-gray-500">{orderRate.service}</div>
                           </div>
+                        ) : hasShipTo ? (
+                          <span className="text-gray-400 text-sm">Click &quot;Get Rates&quot;</span>
                         ) : (
-                          <span className="text-gray-400 text-sm">-</span>
+                          <span className="text-red-400 text-sm">N/A</span>
                         )}
                       </td>
                     </tr>
@@ -532,14 +575,14 @@ export default function OrdersPage() {
         )}
       </div>
       
-      {/* Help Text */}
+      {/* Instructions */}
       <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-        <h4 className="font-medium text-blue-800 mb-2">How to use:</h4>
+        <h4 className="font-medium text-blue-800 mb-2">📦 How to ship orders:</h4>
         <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">
-          <li>Select orders you want to ship</li>
-          <li>Click <strong>&quot;Get Rates&quot;</strong> to see UPS shipping costs</li>
-          <li>Review the rates in the &quot;Ship Rate&quot; column</li>
-          <li>Click <strong>&quot;Ship&quot;</strong> to create labels</li>
+          <li>Select orders using checkboxes</li>
+          <li>Click <strong>&quot;Get Rates&quot;</strong> to see UPS shipping cost</li>
+          <li>Review rates in blue &quot;Ship Rate&quot; column</li>
+          <li>Click <strong>&quot;Ship&quot;</strong> to create labels and charge to UPS account</li>
         </ol>
       </div>
     </div>

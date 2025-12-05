@@ -10,9 +10,15 @@ import {
   Loader2,
   FileText,
   Truck,
-  MapPin
+  MapPin,
+  Check,
+  X,
+  ExternalLink,
+  Image,
+  CheckCircle,
+  Clock
 } from 'lucide-react'
-import { getPrintQueue, markLabelsPrinted, getBatchLabelsUrl } from '@/lib/api'
+import { getPrintQueue, getShipments, markLabelsPrinted, getLabelDownloadUrl } from '@/lib/api'
 
 interface Label {
   _id: string;
@@ -21,23 +27,61 @@ interface Label {
   customer: string;
   destination: string;
   service: string;
+  cost: string;
+  status: string;
   createdAt: string;
 }
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'https://jp-fulfillment-tracker-bcf083e55b7a.herokuapp.com';
 
 export default function LabelsPage() {
   const [labels, setLabels] = useState<Label[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [marking, setMarking] = useState(false)
+  const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
+  const [filter, setFilter] = useState<'to_print' | 'printed' | 'all'>('to_print')
+  const [previewLabel, setPreviewLabel] = useState<string | null>(null)
 
   async function loadLabels() {
     setLoading(true)
     setError(null)
     
     try {
-      const data = await getPrintQueue()
-      setLabels(data.labels || [])
+      let data;
+      
+      if (filter === 'to_print') {
+        // Get only label_created status
+        data = await getPrintQueue()
+        setLabels(data.labels || [])
+      } else {
+        // Get from shipments with status filter
+        const params: any = { limit: 100 }
+        if (filter === 'printed') {
+          params.status = 'printed'
+        }
+        data = await getShipments(params)
+        
+        // Transform shipments to label format
+        const shipments = data.shipments || []
+        setLabels(shipments.filter((s: any) => 
+          filter === 'all' 
+            ? ['label_created', 'printed'].includes(s.status)
+            : s.status === 'printed'
+        ).map((s: any) => ({
+          _id: s._id,
+          orderNumber: s.orderNumber,
+          trackingNumber: s.trackingNumber,
+          customer: s.customer,
+          destination: s.destination,
+          service: s.service,
+          cost: s.cost,
+          status: s.status,
+          createdAt: s.createdAt
+        })))
+      }
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -47,7 +91,7 @@ export default function LabelsPage() {
 
   useEffect(() => {
     loadLabels()
-  }, [])
+  }, [filter])
 
   function toggleSelect(labelId: string) {
     const newSelected = new Set(selected)
@@ -60,10 +104,11 @@ export default function LabelsPage() {
   }
 
   function toggleSelectAll() {
-    if (selected.size === labels.length) {
+    const selectableLabels = labels.filter(l => l.status === 'label_created')
+    if (selected.size === selectableLabels.length && selectableLabels.length > 0) {
       setSelected(new Set())
     } else {
-      setSelected(new Set(labels.map(l => l._id)))
+      setSelected(new Set(selectableLabels.map(l => l._id)))
     }
   }
 
@@ -75,8 +120,9 @@ export default function LabelsPage() {
     
     try {
       await markLabelsPrinted(Array.from(selected))
-      await loadLabels()
+      setSuccess(`Marked ${selected.size} labels as printed`)
       setSelected(new Set())
+      await loadLabels()
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -84,17 +130,87 @@ export default function LabelsPage() {
     }
   }
 
-  function handleDownloadAll() {
-    window.open(getBatchLabelsUrl(), '_blank')
+  async function handlePrintAll() {
+    const toPrint = labels.filter(l => l.status === 'label_created')
+    if (toPrint.length === 0) return
+    
+    setDownloading(true)
+    setError(null)
+    
+    try {
+      // Open print page in new window
+      window.open(`${API_BASE}/api/labels/queue/download`, '_blank')
+      
+      // Mark all as printed automatically
+      const ids = toPrint.map(l => l._id)
+      await markLabelsPrinted(ids)
+      
+      setSuccess(`Opened ${toPrint.length} labels for printing and marked as printed`)
+      setSelected(new Set())
+      await loadLabels()
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setDownloading(false)
+    }
   }
+
+  async function handlePrintSelected() {
+    if (selected.size === 0) return
+    
+    setDownloading(true)
+    setError(null)
+    
+    try {
+      // Open each label in new window for printing
+      const selectedLabels = labels.filter(l => selected.has(l._id))
+      
+      if (selectedLabels.length === 1) {
+        window.open(`${API_BASE}/api/labels/${selectedLabels[0]._id}?format=html`, '_blank')
+      } else {
+        // Open batch print page
+        selectedLabels.forEach(label => {
+          window.open(`${API_BASE}/api/labels/${label._id}?format=html`, '_blank')
+        })
+      }
+      
+      // Mark selected as printed
+      await markLabelsPrinted(Array.from(selected))
+      
+      setSuccess(`Opened ${selected.size} labels for printing and marked as printed`)
+      setSelected(new Set())
+      await loadLabels()
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  function openLabelPreview(id: string) {
+    setPreviewLabel(id)
+  }
+
+  const toPrintCount = labels.filter(l => l.status === 'label_created').length
+  const printedCount = labels.filter(l => l.status === 'printed').length
+
+  const filters = [
+    { value: 'to_print', label: `To Print (${filter === 'to_print' ? labels.length : '?'})`, icon: Clock },
+    { value: 'printed', label: 'Printed', icon: CheckCircle },
+    { value: 'all', label: 'All Labels', icon: FileText },
+  ]
 
   return (
     <div className="p-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Print Queue</h1>
-          <p className="text-gray-500 mt-1">{labels.length} labels ready to print</p>
+          <h1 className="text-2xl font-bold text-gray-900">Labels</h1>
+          <p className="text-gray-500 mt-1">
+            {filter === 'to_print' && `${labels.length} labels ready to print`}
+            {filter === 'printed' && `${labels.length} labels printed`}
+            {filter === 'all' && `${labels.length} total labels`}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <button
@@ -105,22 +221,58 @@ export default function LabelsPage() {
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
-          {labels.length > 0 && (
+          {filter === 'to_print' && labels.length > 0 && (
             <button
-              onClick={handleDownloadAll}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              onClick={handlePrintAll}
+              disabled={downloading}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
-              <Download className="w-4 h-4" />
-              Download All (ZPL)
+              {downloading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Printer className="w-4 h-4" />
+              )}
+              Print All ({labels.length})
             </button>
           )}
         </div>
       </div>
 
-      {/* Error */}
+      {/* Filters */}
+      <div className="mb-6 flex items-center gap-2">
+        {filters.map((f) => {
+          const Icon = f.icon
+          return (
+            <button
+              key={f.value}
+              onClick={() => {
+                setFilter(f.value as any)
+                setSelected(new Set())
+              }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                filter === f.value
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+              {f.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Alerts */}
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-          {error}
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center justify-between">
+          <span className="text-red-700">{error}</span>
+          <button onClick={() => setError(null)}><X className="w-5 h-5 text-red-400" /></button>
+        </div>
+      )}
+      {success && (
+        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center justify-between">
+          <span className="text-green-700">{success}</span>
+          <button onClick={() => setSuccess(null)}><X className="w-5 h-5 text-green-400" /></button>
         </div>
       )}
 
@@ -130,18 +282,20 @@ export default function LabelsPage() {
           <span className="font-medium text-blue-800">
             {selected.size} label{selected.size > 1 ? 's' : ''} selected
           </span>
-          <button
-            onClick={handleMarkPrinted}
-            disabled={marking}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-          >
-            {marking ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Printer className="w-4 h-4" />
-            )}
-            Mark as Printed
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handlePrintSelected}
+              disabled={downloading}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+            >
+              {downloading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Printer className="w-4 h-4" />
+              )}
+              Print & Mark as Printed
+            </button>
+          </div>
         </div>
       )}
 
@@ -150,105 +304,207 @@ export default function LabelsPage() {
         {loading ? (
           <div className="p-12 text-center">
             <Loader2 className="w-8 h-8 animate-spin text-gray-400 mx-auto" />
-            <p className="mt-4 text-gray-500">Loading print queue...</p>
+            <p className="mt-4 text-gray-500">Loading labels...</p>
           </div>
         ) : labels.length === 0 ? (
           <div className="p-12 text-center">
             <Printer className="w-12 h-12 text-gray-300 mx-auto" />
-            <p className="mt-4 text-gray-500">No labels in print queue</p>
-            <p className="text-sm text-gray-400 mt-1">Labels will appear here after you ship orders</p>
+            <h3 className="mt-4 text-lg font-medium text-gray-900">
+              {filter === 'to_print' && 'No labels to print'}
+              {filter === 'printed' && 'No printed labels'}
+              {filter === 'all' && 'No labels yet'}
+            </h3>
+            <p className="mt-2 text-gray-500">
+              {filter === 'to_print' && 'Create labels from the Orders page'}
+              {filter === 'printed' && 'Printed labels will appear here'}
+              {filter === 'all' && 'Labels will appear here after you ship orders'}
+            </p>
           </div>
         ) : (
-          <div className="table-container">
-            <table>
-              <thead>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="w-12">
-                    <button onClick={toggleSelectAll} className="p-1">
-                      {selected.size === labels.length ? (
-                        <CheckSquare className="w-5 h-5 text-blue-600" />
-                      ) : (
-                        <Square className="w-5 h-5 text-gray-400" />
-                      )}
-                    </button>
-                  </th>
-                  <th>Order</th>
-                  <th>Tracking</th>
-                  <th>Customer</th>
-                  <th>Destination</th>
-                  <th>Service</th>
-                  <th>Created</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {labels.map((label) => (
-                  <tr 
-                    key={label._id}
-                    className={selected.has(label._id) ? 'bg-blue-50' : ''}
-                  >
-                    <td>
-                      <button 
-                        onClick={() => toggleSelect(label._id)}
-                        className="p-1"
-                      >
-                        {selected.has(label._id) ? (
+                  {filter === 'to_print' && (
+                    <th className="px-4 py-3 text-left w-12">
+                      <button onClick={toggleSelectAll} className="p-1 hover:bg-gray-200 rounded">
+                        {selected.size === labels.filter(l => l.status === 'label_created').length && labels.length > 0 ? (
                           <CheckSquare className="w-5 h-5 text-blue-600" />
                         ) : (
                           <Square className="w-5 h-5 text-gray-400" />
                         )}
                       </button>
-                    </td>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <FileText className="w-4 h-4 text-gray-400" />
-                        <span className="font-medium text-gray-900">{label.orderNumber}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <a 
-                        href={`https://www.ups.com/track?tracknum=${label.trackingNumber}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline font-mono text-sm"
-                      >
-                        {label.trackingNumber}
-                      </a>
-                    </td>
-                    <td className="text-gray-700">{label.customer}</td>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <MapPin className="w-4 h-4 text-gray-400" />
-                        <span>{label.destination}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="flex items-center gap-2">
-                        <Truck className="w-4 h-4 text-gray-400" />
-                        <span>{label.service}</span>
-                      </div>
-                    </td>
-                    <td className="text-gray-500 text-sm">
-                      {new Date(label.createdAt).toLocaleString()}
-                    </td>
-                  </tr>
-                ))}
+                    </th>
+                  )}
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Order</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Tracking</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Customer</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Destination</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Service</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Cost</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {labels.map((label) => {
+                  const isPrinted = label.status === 'printed'
+                  
+                  return (
+                    <tr 
+                      key={label._id}
+                      className={`hover:bg-gray-50 ${selected.has(label._id) ? 'bg-blue-50' : ''}`}
+                    >
+                      {filter === 'to_print' && (
+                        <td className="px-4 py-4">
+                          {!isPrinted && (
+                            <button 
+                              onClick={() => toggleSelect(label._id)}
+                              className="p-1 hover:bg-gray-200 rounded"
+                            >
+                              {selected.has(label._id) ? (
+                                <CheckSquare className="w-5 h-5 text-blue-600" />
+                              ) : (
+                                <Square className="w-5 h-5 text-gray-400" />
+                              )}
+                            </button>
+                          )}
+                        </td>
+                      )}
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-gray-400" />
+                          <span className="font-semibold text-gray-900">{label.orderNumber}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <a 
+                          href={`https://www.ups.com/track?tracknum=${label.trackingNumber}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-blue-600 hover:underline font-mono text-sm"
+                        >
+                          {label.trackingNumber?.substring(0, 14)}...
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </td>
+                      <td className="px-4 py-4 text-gray-700">{label.customer}</td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-2 text-gray-600">
+                          <MapPin className="w-4 h-4 text-gray-400" />
+                          {label.destination}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-2 text-gray-600">
+                          <Truck className="w-4 h-4 text-gray-400" />
+                          {label.service}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4 font-medium text-gray-900">{label.cost}</td>
+                      <td className="px-4 py-4">
+                        {isPrinted ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                            <CheckCircle className="w-3 h-3" />
+                            Printed
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-700">
+                            <Clock className="w-3 h-3" />
+                            To Print
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => openLabelPreview(label._id)}
+                            className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                            title="Preview"
+                          >
+                            <Image className="w-4 h-4" />
+                          </button>
+                          <a
+                            href={`${API_BASE}/api/labels/${label._id}?format=html`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
+                            title="Print"
+                          >
+                            <Printer className="w-4 h-4" />
+                          </a>
+                          <a
+                            href={`${API_BASE}/api/labels/${label._id}`}
+                            download={`${label.orderNumber}-label.gif`}
+                            className="p-2 text-green-600 hover:bg-green-50 rounded-lg"
+                            title="Download"
+                          >
+                            <Download className="w-4 h-4" />
+                          </a>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
 
-      {/* Print Instructions */}
-      {labels.length > 0 && (
-        <div className="mt-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
-          <h3 className="font-medium text-gray-900 mb-2">Print Instructions</h3>
-          <ol className="text-sm text-gray-600 space-y-1 list-decimal list-inside">
-            <li>Click "Download All (ZPL)" to get the label file</li>
-            <li>Send the ZPL file to your Zebra thermal printer</li>
-            <li>Select printed labels and click "Mark as Printed"</li>
-          </ol>
+      {/* Label Preview Modal */}
+      {previewLabel && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 overflow-hidden">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h3 className="font-semibold">Label Preview</h3>
+              <button 
+                onClick={() => setPreviewLabel(null)}
+                className="p-1 hover:bg-gray-100 rounded"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 text-center bg-gray-50">
+              <img 
+                src={`${API_BASE}/api/labels/${previewLabel}`}
+                alt="Shipping Label"
+                className="max-w-full mx-auto border border-gray-200 rounded shadow-sm"
+              />
+            </div>
+            <div className="p-4 border-t flex justify-end gap-3">
+              <a
+                href={`${API_BASE}/api/labels/${previewLabel}`}
+                download="label.gif"
+                className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                <Download className="w-4 h-4" />
+                Download
+              </a>
+              <a
+                href={`${API_BASE}/api/labels/${previewLabel}?format=html`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                <Printer className="w-4 h-4" />
+                Print
+              </a>
+            </div>
+          </div>
         </div>
       )}
+
+      {/* Instructions */}
+      <div className="mt-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+        <h4 className="font-medium text-gray-900 mb-2">📋 How to print labels:</h4>
+        <ol className="text-sm text-gray-600 space-y-1 list-decimal list-inside">
+          <li>Select labels or click <strong>&quot;Print All&quot;</strong></li>
+          <li>A print window will open - use Ctrl+P / Cmd+P to print</li>
+          <li>Labels are automatically marked as &quot;Printed&quot; after downloading</li>
+          <li>Use filters to view printed vs pending labels</li>
+        </ol>
+      </div>
     </div>
   )
 }

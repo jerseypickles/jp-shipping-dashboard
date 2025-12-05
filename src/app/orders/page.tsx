@@ -12,9 +12,10 @@ import {
   Loader2,
   DollarSign,
   AlertCircle,
-  CheckCircle
+  CheckCircle,
+  Calculator
 } from 'lucide-react'
-import { getUnfulfilledOrders, buyLabel, buyBatchLabels } from '@/lib/api'
+import { getUnfulfilledOrders, buyLabel, buyBatchLabels, getRates } from '@/lib/api'
 
 interface OrderItem {
   name: string;
@@ -52,6 +53,14 @@ interface Order {
   };
 }
 
+interface RateInfo {
+  loading: boolean;
+  rate?: number;
+  rateFormatted?: string;
+  service?: string;
+  error?: string;
+}
+
 interface ShipResult {
   orderNumber: string;
   trackingNumber?: string;
@@ -64,9 +73,13 @@ export default function OrdersPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [shipping, setShipping] = useState(false)
+  const [gettingRates, setGettingRates] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [shipResults, setShipResults] = useState<ShipResult[]>([])
+  
+  // Rates per order
+  const [rates, setRates] = useState<Record<string, RateInfo>>({})
 
   async function loadOrders() {
     setLoading(true)
@@ -75,6 +88,7 @@ export default function OrdersPage() {
     try {
       const data = await getUnfulfilledOrders(100)
       setOrders(data.orders || [])
+      setRates({}) // Reset rates when reloading
     } catch (err: any) {
       setError(err.message)
     } finally {
@@ -104,6 +118,61 @@ export default function OrdersPage() {
     }
   }
 
+  // Get rates for selected orders
+  async function handleGetRates() {
+    if (selected.size === 0) return
+    
+    setGettingRates(true)
+    setError(null)
+    
+    const selectedOrders = orders.filter(o => selected.has(o.shopifyOrderId))
+    
+    // Mark all as loading
+    const newRates: Record<string, RateInfo> = {}
+    selectedOrders.forEach(o => {
+      newRates[o.shopifyOrderId] = { loading: true }
+    })
+    setRates(prev => ({ ...prev, ...newRates }))
+    
+    // Fetch rates one by one
+    for (const order of selectedOrders) {
+      try {
+        const rateData = await getRates({
+          orderNumber: order.orderNumber,
+          shipTo: order.shipTo,
+          package: order.package
+        })
+        
+        // Find Ground rate (03) or cheapest
+        const groundRate = rateData.find((r: any) => r.service === '03' || r.serviceCode === '03')
+        const cheapestRate = rateData[0]
+        const selectedRate = groundRate || cheapestRate
+        
+        setRates(prev => ({
+          ...prev,
+          [order.shopifyOrderId]: {
+            loading: false,
+            rate: selectedRate?.amountCents || selectedRate?.amount * 100,
+            rateFormatted: selectedRate?.amount 
+              ? `$${selectedRate.amount.toFixed(2)}`
+              : `$${((selectedRate?.amountCents || 0) / 100).toFixed(2)}`,
+            service: selectedRate?.serviceName || 'UPS Ground'
+          }
+        }))
+      } catch (err: any) {
+        setRates(prev => ({
+          ...prev,
+          [order.shopifyOrderId]: {
+            loading: false,
+            error: err.message
+          }
+        }))
+      }
+    }
+    
+    setGettingRates(false)
+  }
+
   async function handleShipSelected() {
     if (selected.size === 0) return
     
@@ -119,17 +188,19 @@ export default function OrdersPage() {
         // Single order
         const result = await buyLabel(selectedOrders[0])
         
+        const cost = result.cost?.formatted || 
+                     (result.cost?.amount ? `$${(result.cost.amount / 100).toFixed(2)}` : '$0.00')
+        
         setShipResults([{
           orderNumber: selectedOrders[0].orderNumber,
           trackingNumber: result.tracking?.number || result.shipment?.trackingNumber,
-          cost: result.cost?.formatted || '$' + ((result.cost?.amount || 0) / 100).toFixed(2)
+          cost: cost
         }])
         
         setSuccess(
           `✓ Label created for ${selectedOrders[0].orderNumber}\n` +
           `Tracking: ${result.tracking?.number || result.shipment?.trackingNumber}\n` +
-          `Cost: ${result.cost?.formatted || 'N/A'}\n` +
-          `Week Total: ${result.wallet?.weekTotalFormatted || 'N/A'} (${result.wallet?.weekLabels || 0} labels)`
+          `Cost: ${cost}`
         )
       } else {
         // Batch orders
@@ -161,19 +232,13 @@ export default function OrdersPage() {
         
         const successCount = result.summary?.success || result.successful?.length || 0
         const failedCount = result.summary?.failed || result.failed?.length || 0
-        const totalCost = result.summary?.totalCostFormatted || '$' + ((result.summary?.totalCost || 0) / 100).toFixed(2)
+        const totalCost = result.summary?.totalCostFormatted || 
+                          `$${((result.summary?.totalCost || 0) / 100).toFixed(2)}`
         
-        if (failedCount > 0) {
-          setSuccess(
-            `Created ${successCount} labels, ${failedCount} failed\n` +
-            `Total Cost: ${totalCost}`
-          )
-        } else {
-          setSuccess(
-            `✓ Created ${successCount} labels successfully!\n` +
-            `Total Cost: ${totalCost}`
-          )
-        }
+        setSuccess(
+          `Created ${successCount} labels${failedCount > 0 ? `, ${failedCount} failed` : ''}\n` +
+          `Total Cost: ${totalCost}`
+        )
       }
       
       // Refresh orders
@@ -190,6 +255,15 @@ export default function OrdersPage() {
   const selectedOrders = orders.filter(o => selected.has(o.shopifyOrderId))
   const totalWeight = selectedOrders.reduce((sum, o) => sum + (o.package?.weight || 0), 0)
   const totalItems = selectedOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0)
+  
+  // Calculate total estimated cost from rates
+  const totalEstimatedCost = selectedOrders.reduce((sum, o) => {
+    const rate = rates[o.shopifyOrderId]
+    return sum + (rate?.rate || 0)
+  }, 0)
+  
+  const hasAllRates = selectedOrders.every(o => rates[o.shopifyOrderId]?.rate !== undefined)
+  const someRatesLoading = selectedOrders.some(o => rates[o.shopifyOrderId]?.loading)
 
   return (
     <div className="p-8">
@@ -253,7 +327,7 @@ export default function OrdersPage() {
                           </a>
                         ) : '-'}
                       </td>
-                      <td className="px-4 py-2">{r.cost || '-'}</td>
+                      <td className="px-4 py-2 font-medium">{r.cost || '-'}</td>
                       <td className="px-4 py-2">
                         {r.error ? (
                           <span className="text-red-600">{r.error}</span>
@@ -287,20 +361,46 @@ export default function OrdersPage() {
                   <Package className="w-4 h-4" />
                   {totalItems} items
                 </span>
+                {totalEstimatedCost > 0 && (
+                  <span className="flex items-center gap-1 font-semibold text-pickle-800">
+                    <DollarSign className="w-4 h-4" />
+                    Est. Total: ${(totalEstimatedCost / 100).toFixed(2)}
+                  </span>
+                )}
               </div>
             </div>
-            <button
-              onClick={handleShipSelected}
-              disabled={shipping}
-              className="flex items-center gap-2 px-6 py-2.5 bg-pickle-600 text-white rounded-lg hover:bg-pickle-700 transition-colors disabled:opacity-50 font-medium"
-            >
-              {shipping ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Truck className="w-4 h-4" />
-              )}
-              {shipping ? 'Creating Labels...' : `Ship ${selected.size} Order${selected.size > 1 ? 's' : ''}`}
-            </button>
+            <div className="flex items-center gap-3">
+              {/* Get Rates Button */}
+              <button
+                onClick={handleGetRates}
+                disabled={gettingRates || shipping}
+                className="flex items-center gap-2 px-4 py-2.5 bg-white border border-pickle-300 text-pickle-700 rounded-lg hover:bg-pickle-100 transition-colors disabled:opacity-50 font-medium"
+              >
+                {gettingRates ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Calculator className="w-4 h-4" />
+                )}
+                {gettingRates ? 'Getting Rates...' : 'Get Rates'}
+              </button>
+              
+              {/* Ship Button */}
+              <button
+                onClick={handleShipSelected}
+                disabled={shipping || gettingRates}
+                className="flex items-center gap-2 px-6 py-2.5 bg-pickle-600 text-white rounded-lg hover:bg-pickle-700 transition-colors disabled:opacity-50 font-medium"
+              >
+                {shipping ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Truck className="w-4 h-4" />
+                )}
+                {shipping ? 'Creating Labels...' : `Ship ${selected.size} Order${selected.size > 1 ? 's' : ''}`}
+                {hasAllRates && totalEstimatedCost > 0 && (
+                  <span className="ml-1">(${(totalEstimatedCost / 100).toFixed(2)})</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -337,76 +437,95 @@ export default function OrdersPage() {
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Destination</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Weight</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Items</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Total</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Order Total</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Ship Rate</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {orders.map((order) => (
-                  <tr 
-                    key={order.shopifyOrderId}
-                    className={`hover:bg-gray-50 transition-colors ${selected.has(order.shopifyOrderId) ? 'bg-pickle-50 hover:bg-pickle-100' : ''}`}
-                  >
-                    <td className="px-4 py-4">
-                      <button 
-                        onClick={() => toggleSelect(order.shopifyOrderId)}
-                        className="p-1 hover:bg-gray-200 rounded"
-                      >
-                        {selected.has(order.shopifyOrderId) ? (
-                          <CheckSquare className="w-5 h-5 text-pickle-600" />
-                        ) : (
-                          <Square className="w-5 h-5 text-gray-400" />
-                        )}
-                      </button>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="font-semibold text-gray-900">{order.orderNumber}</div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {new Date(order.orderDate).toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="font-medium text-gray-900">{order.customer?.name || 'N/A'}</div>
-                      <div className="text-xs text-gray-500 mt-1 truncate max-w-[200px]">
-                        {order.customer?.email || ''}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-start gap-2">
-                        <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <div className="text-gray-900">
-                            {order.shipTo?.city}, {order.shipTo?.state}
-                          </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            {order.shipTo?.zip}
+                {orders.map((order) => {
+                  const orderRate = rates[order.shopifyOrderId]
+                  
+                  return (
+                    <tr 
+                      key={order.shopifyOrderId}
+                      className={`hover:bg-gray-50 transition-colors ${selected.has(order.shopifyOrderId) ? 'bg-pickle-50 hover:bg-pickle-100' : ''}`}
+                    >
+                      <td className="px-4 py-4">
+                        <button 
+                          onClick={() => toggleSelect(order.shopifyOrderId)}
+                          className="p-1 hover:bg-gray-200 rounded"
+                        >
+                          {selected.has(order.shopifyOrderId) ? (
+                            <CheckSquare className="w-5 h-5 text-pickle-600" />
+                          ) : (
+                            <Square className="w-5 h-5 text-gray-400" />
+                          )}
+                        </button>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="font-semibold text-gray-900">{order.orderNumber}</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {new Date(order.orderDate).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="font-medium text-gray-900">{order.customer?.name || 'N/A'}</div>
+                        <div className="text-xs text-gray-500 mt-1 truncate max-w-[180px]">
+                          {order.customer?.email || ''}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-start gap-2">
+                          <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                          <div>
+                            <div className="text-gray-900">
+                              {order.shipTo?.city}, {order.shipTo?.state}
+                            </div>
+                            <div className="text-xs text-gray-500 mt-1">
+                              {order.shipTo?.zip}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-2">
-                        <Scale className="w-4 h-4 text-gray-400" />
-                        <span className="font-medium">{order.package?.weight?.toFixed(1) || '1.0'} lbs</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                        {order.items?.length || 0} items
-                      </span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex items-center gap-1">
-                        <DollarSign className="w-4 h-4 text-gray-400" />
-                        <span className="font-medium">{order.totals?.total || '0.00'}</span>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex items-center gap-2">
+                          <Scale className="w-4 h-4 text-gray-400" />
+                          <span className="font-medium">{order.package?.weight?.toFixed(1) || '1.0'} lbs</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                          {order.items?.length || 0} items
+                        </span>
+                      </td>
+                      <td className="px-4 py-4">
+                        <span className="font-medium text-gray-900">${order.totals?.total || '0.00'}</span>
+                      </td>
+                      <td className="px-4 py-4">
+                        {orderRate?.loading ? (
+                          <div className="flex items-center gap-2 text-gray-400">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span className="text-sm">Loading...</span>
+                          </div>
+                        ) : orderRate?.error ? (
+                          <span className="text-xs text-red-500">{orderRate.error}</span>
+                        ) : orderRate?.rateFormatted ? (
+                          <div>
+                            <span className="font-semibold text-green-600">{orderRate.rateFormatted}</span>
+                            <div className="text-xs text-gray-500">{orderRate.service}</div>
+                          </div>
+                        ) : (
+                          <span className="text-gray-400 text-sm">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
@@ -414,8 +533,14 @@ export default function OrdersPage() {
       </div>
       
       {/* Help Text */}
-      <div className="mt-6 text-center text-sm text-gray-500">
-        Select orders and click &quot;Ship&quot; to create UPS labels. Labels will be added to the print queue.
+      <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+        <h4 className="font-medium text-blue-800 mb-2">How to use:</h4>
+        <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">
+          <li>Select orders you want to ship</li>
+          <li>Click <strong>&quot;Get Rates&quot;</strong> to see UPS shipping costs</li>
+          <li>Review the rates in the &quot;Ship Rate&quot; column</li>
+          <li>Click <strong>&quot;Ship&quot;</strong> to create labels</li>
+        </ol>
       </div>
     </div>
   )

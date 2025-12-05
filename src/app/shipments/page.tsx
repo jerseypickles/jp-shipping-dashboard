@@ -84,7 +84,11 @@ export default function ShipmentsPage() {
     try {
       const result = await voidLabel(voidingShipment.trackingNumber, voidReason)
       
-      setSuccess(`Label ${voidingShipment.trackingNumber} voided successfully`)
+      const message = result.shopifyCancelled
+        ? `Label ${voidingShipment.trackingNumber} voided. Order returned to pending.`
+        : `Label ${voidingShipment.trackingNumber} voided. Note: May need manual Shopify update.`
+      
+      setSuccess(message)
       setVoidingShipment(null)
       setVoidReason('')
       

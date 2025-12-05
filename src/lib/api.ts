@@ -77,27 +77,39 @@ export async function getShipments(params?: {
   return fetchAPI(`/api/shipping/shipments?${query}`);
 }
 
+// Get shipping rates for an order
 export async function getRates(orderData: any) {
   return fetchAPI('/api/shipping/rates', {
     method: 'POST',
-    body: JSON.stringify(orderData),
+    body: JSON.stringify({ order: orderData }),  // ← FIXED: wrap in { order: ... }
   });
 }
 
+// Get rates for multiple orders
+export async function getBatchRates(orders: any[]) {
+  return fetchAPI('/api/shipping/rates-batch', {
+    method: 'POST',
+    body: JSON.stringify({ orders }),
+  });
+}
+
+// Buy a single label
 export async function buyLabel(order: any, serviceCode = '03') {
   return fetchAPI('/api/shipping/buy', {
     method: 'POST',
-    body: JSON.stringify({ order, serviceCode }),
+    body: JSON.stringify({ order, serviceCode }),  // ← Already correct
   });
 }
 
+// Buy multiple labels
 export async function buyBatchLabels(orders: any[], serviceCode = '03') {
   return fetchAPI('/api/shipping/buy-batch', {
     method: 'POST',
-    body: JSON.stringify({ orders, serviceCode }),
+    body: JSON.stringify({ orders, serviceCode }),  // ← Already correct
   });
 }
 
+// Void a label
 export async function voidLabel(trackingNumber: string, reason?: string) {
   return fetchAPI(`/api/shipping/void/${trackingNumber}`, {
     method: 'POST',
@@ -105,6 +117,7 @@ export async function voidLabel(trackingNumber: string, reason?: string) {
   });
 }
 
+// Get shipping analytics
 export async function getShippingAnalytics(startDate?: string, endDate?: string) {
   const query = new URLSearchParams();
   if (startDate) query.append('startDate', startDate);
@@ -122,7 +135,7 @@ export async function getPrintQueue() {
 }
 
 export async function markLabelsPrinted(shipmentIds: string[]) {
-  return fetchAPI('/api/labels/mark-printed', {
+  return fetchAPI('/api/shipping/print-queue/mark-printed', {
     method: 'POST',
     body: JSON.stringify({ shipmentIds }),
   });

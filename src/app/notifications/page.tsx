@@ -342,7 +342,9 @@ export default function NotificationsPage() {
         service: 'Ground',
         estimatedDelivery: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString()
       })
-      setPreviewModal({ open: true, html: result.html, subject: result.subject })
+      // Backend returns { success, preview: { subject, html, ... } }
+      const preview = result.preview || result
+      setPreviewModal({ open: true, html: preview.html, subject: preview.subject })
     } catch (err: any) {
       setError(err.message)
     }

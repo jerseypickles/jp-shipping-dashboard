@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Fragment } from 'react'
+import { useState, useEffect, Fragment, useMemo } from 'react'
 import { 
   Package, 
   RefreshCw, 
@@ -26,7 +26,11 @@ import {
   AlertTriangle,
   Copy,
   TrendingDown,
-  TrendingUp
+  TrendingUp,
+  Search,
+  Filter,
+  Calendar,
+  XCircle
 } from 'lucide-react'
 import { getUnfulfilledOrders, buyLabel, buyBatchLabels, getRates } from '@/lib/api'
 
@@ -135,6 +139,24 @@ interface EditingAddress {
   };
 }
 
+interface Filters {
+  search: string;
+  dateFrom: string;
+  dateTo: string;
+  state: string;
+  hasRate: 'all' | 'with' | 'without' | 'error';
+  weightMin: string;
+  weightMax: string;
+}
+
+const US_STATES = [
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+  'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+  'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+  'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+  'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'
+]
+
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [pagination, setPagination] = useState<Pagination | null>(null)
@@ -153,6 +175,112 @@ export default function OrdersPage() {
   const [editingAddress, setEditingAddress] = useState<EditingAddress | null>(null)
   const [savingAddress, setSavingAddress] = useState(false)
   const [copiedInvoice, setCopiedInvoice] = useState(false)
+  
+  // Search & Filter state
+  const [filters, setFilters] = useState<Filters>({
+    search: '',
+    dateFrom: '',
+    dateTo: '',
+    state: '',
+    hasRate: 'all',
+    weightMin: '',
+    weightMax: ''
+  })
+  const [showFilters, setShowFilters] = useState(false)
+
+  // Filter orders locally
+  const filteredOrders = useMemo(() => {
+    return orders.filter(order => {
+      // Search filter
+      if (filters.search) {
+        const searchLower = filters.search.toLowerCase().trim()
+        const searchableFields = [
+          order.orderNumber,
+          order.customer?.name,
+          order.customer?.email,
+          order.shipTo?.name,
+          order.shipTo?.city,
+          order.shipTo?.state,
+          order.shipTo?.zip,
+          order.shipTo?.street1,
+          ...(order.items?.map(i => i.name) || []),
+          ...(order.items?.map(i => i.sku) || [])
+        ].filter(Boolean).map(s => s?.toLowerCase())
+        
+        if (!searchableFields.some(field => field?.includes(searchLower))) {
+          return false
+        }
+      }
+      
+      // Date from filter
+      if (filters.dateFrom) {
+        const orderDate = new Date(order.orderDate)
+        const fromDate = new Date(filters.dateFrom)
+        fromDate.setHours(0, 0, 0, 0)
+        if (orderDate < fromDate) return false
+      }
+      
+      // Date to filter
+      if (filters.dateTo) {
+        const orderDate = new Date(order.orderDate)
+        const toDate = new Date(filters.dateTo)
+        toDate.setHours(23, 59, 59, 999)
+        if (orderDate > toDate) return false
+      }
+      
+      // State filter
+      if (filters.state && order.shipTo?.state !== filters.state) {
+        return false
+      }
+      
+      // Rate status filter
+      if (filters.hasRate !== 'all') {
+        const orderRate = rates[order.shopifyOrderId]
+        if (filters.hasRate === 'with' && !orderRate?.rate) return false
+        if (filters.hasRate === 'without' && (orderRate?.rate || orderRate?.error)) return false
+        if (filters.hasRate === 'error' && !orderRate?.error) return false
+      }
+      
+      // Weight min filter
+      if (filters.weightMin) {
+        const minWeight = parseFloat(filters.weightMin)
+        if (!isNaN(minWeight) && (order.package?.weight || 0) < minWeight) return false
+      }
+      
+      // Weight max filter
+      if (filters.weightMax) {
+        const maxWeight = parseFloat(filters.weightMax)
+        if (!isNaN(maxWeight) && (order.package?.weight || 0) > maxWeight) return false
+      }
+      
+      return true
+    })
+  }, [orders, filters, rates])
+  
+  // Count active filters
+  const activeFilterCount = useMemo(() => {
+    let count = 0
+    if (filters.dateFrom) count++
+    if (filters.dateTo) count++
+    if (filters.state) count++
+    if (filters.hasRate !== 'all') count++
+    if (filters.weightMin) count++
+    if (filters.weightMax) count++
+    return count
+  }, [filters])
+  
+  // Clear all filters
+  function clearFilters() {
+    setFilters({
+      search: '',
+      dateFrom: '',
+      dateTo: '',
+      state: '',
+      hasRate: 'all',
+      weightMin: '',
+      weightMax: ''
+    })
+  }
 
   async function loadOrders(page: number = 1, refresh: boolean = false) {
     setLoading(true)
@@ -189,10 +317,20 @@ export default function OrdersPage() {
   }
 
   function toggleSelectAll() {
-    if (selected.size === orders.length) {
-      setSelected(new Set())
+    // Select/deselect only filtered orders
+    const filteredIds = new Set(filteredOrders.map(o => o.shopifyOrderId))
+    const allFilteredSelected = filteredOrders.every(o => selected.has(o.shopifyOrderId))
+    
+    if (allFilteredSelected) {
+      // Deselect all filtered
+      const newSelected = new Set(selected)
+      filteredIds.forEach(id => newSelected.delete(id))
+      setSelected(newSelected)
     } else {
-      setSelected(new Set(orders.map(o => o.shopifyOrderId)))
+      // Select all filtered
+      const newSelected = new Set(selected)
+      filteredIds.forEach(id => newSelected.add(id))
+      setSelected(newSelected)
     }
   }
   
@@ -557,7 +695,8 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
     }
   }
 
-  const selectedOrders = orders.filter(o => selected.has(o.shopifyOrderId))
+  // Use filtered orders for calculations
+  const selectedOrders = filteredOrders.filter(o => selected.has(o.shopifyOrderId))
   const totalWeight = selectedOrders.reduce((sum, o) => sum + (o.package?.weight || 0), 0)
   const totalItems = selectedOrders.reduce((sum, o) => sum + (o.items?.length || 0), 0)
   
@@ -575,6 +714,10 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
 
   const addressChanged = editingAddress ? hasAddressChanged() : false
   const canCalculateRate = editingAddress && editingAddress.shipTo.zip && editingAddress.shipTo.zip.length >= 5
+  
+  // Check if all filtered orders are selected
+  const allFilteredSelected = filteredOrders.length > 0 && filteredOrders.every(o => selected.has(o.shopifyOrderId))
+  const someFilteredSelected = filteredOrders.some(o => selected.has(o.shopifyOrderId))
 
   return (
     <div className="p-8">
@@ -585,6 +728,9 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
           <p className="text-gray-500 mt-1">
             {pagination ? `${pagination.total} orders total` : `${orders.length} orders`}
             {pagination && pagination.totalPages > 1 && ` • Page ${pagination.page} of ${pagination.totalPages}`}
+            {filteredOrders.length !== orders.length && (
+              <span className="text-pickle-600 font-medium"> • {filteredOrders.length} shown</span>
+            )}
           </p>
         </div>
         <button
@@ -595,6 +741,206 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           Sync from Shopify
         </button>
+      </div>
+      
+      {/* Search & Filter Bar */}
+      <div className="mb-6 space-y-3">
+        {/* Search Row */}
+        <div className="flex items-center gap-3">
+          {/* Search Input */}
+          <div className="flex-1 relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search by order #, customer name, email, city, ZIP, SKU..."
+              value={filters.search}
+              onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+              className="w-full pl-10 pr-10 py-2.5 border border-gray-200 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+            />
+            {filters.search && (
+              <button
+                onClick={() => setFilters(prev => ({ ...prev, search: '' }))}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
+              >
+                <XCircle className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+          
+          {/* Filter Toggle Button */}
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center gap-2 px-4 py-2.5 border rounded-lg transition-colors ${
+              showFilters || activeFilterCount > 0
+                ? 'bg-pickle-50 border-pickle-300 text-pickle-700'
+                : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <Filter className="w-4 h-4" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="flex items-center justify-center w-5 h-5 text-xs font-bold bg-pickle-600 text-white rounded-full">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+          
+          {/* Clear All Filters */}
+          {(filters.search || activeFilterCount > 0) && (
+            <button
+              onClick={clearFilters}
+              className="flex items-center gap-2 px-3 py-2.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+            >
+              <X className="w-4 h-4" />
+              Clear All
+            </button>
+          )}
+        </div>
+        
+        {/* Expanded Filters */}
+        {showFilters && (
+          <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+              {/* Date From */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Date From</label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="date"
+                    value={filters.dateFrom}
+                    onChange={(e) => setFilters(prev => ({ ...prev, dateFrom: e.target.value }))}
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-pickle-500"
+                  />
+                </div>
+              </div>
+              
+              {/* Date To */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Date To</label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="date"
+                    value={filters.dateTo}
+                    onChange={(e) => setFilters(prev => ({ ...prev, dateTo: e.target.value }))}
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-pickle-500"
+                  />
+                </div>
+              </div>
+              
+              {/* State */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Ship to State</label>
+                <select
+                  value={filters.state}
+                  onChange={(e) => setFilters(prev => ({ ...prev, state: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-pickle-500 bg-white"
+                >
+                  <option value="">All States</option>
+                  {US_STATES.map(st => (
+                    <option key={st} value={st}>{st}</option>
+                  ))}
+                </select>
+              </div>
+              
+              {/* Rate Status */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Rate Status</label>
+                <select
+                  value={filters.hasRate}
+                  onChange={(e) => setFilters(prev => ({ ...prev, hasRate: e.target.value as Filters['hasRate'] }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-pickle-500 bg-white"
+                >
+                  <option value="all">All Orders</option>
+                  <option value="with">With Rate</option>
+                  <option value="without">Without Rate</option>
+                  <option value="error">Rate Error</option>
+                </select>
+              </div>
+              
+              {/* Weight Min */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Weight Min (lbs)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  placeholder="0"
+                  value={filters.weightMin}
+                  onChange={(e) => setFilters(prev => ({ ...prev, weightMin: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-pickle-500"
+                />
+              </div>
+              
+              {/* Weight Max */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Weight Max (lbs)</label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  placeholder="∞"
+                  value={filters.weightMax}
+                  onChange={(e) => setFilters(prev => ({ ...prev, weightMax: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-pickle-500"
+                />
+              </div>
+            </div>
+            
+            {/* Quick Filters */}
+            <div className="mt-4 pt-4 border-t border-gray-200 flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-gray-500 mr-2">Quick:</span>
+              <button
+                onClick={() => {
+                  const today = new Date().toISOString().split('T')[0]
+                  setFilters(prev => ({ ...prev, dateFrom: today, dateTo: today }))
+                }}
+                className="px-3 py-1 text-xs bg-white border border-gray-200 rounded-full hover:bg-gray-50"
+              >
+                Today
+              </button>
+              <button
+                onClick={() => {
+                  const today = new Date()
+                  const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
+                  setFilters(prev => ({ 
+                    ...prev, 
+                    dateFrom: weekAgo.toISOString().split('T')[0], 
+                    dateTo: today.toISOString().split('T')[0] 
+                  }))
+                }}
+                className="px-3 py-1 text-xs bg-white border border-gray-200 rounded-full hover:bg-gray-50"
+              >
+                Last 7 Days
+              </button>
+              <button
+                onClick={() => setFilters(prev => ({ ...prev, state: 'NJ' }))}
+                className="px-3 py-1 text-xs bg-white border border-gray-200 rounded-full hover:bg-gray-50"
+              >
+                New Jersey
+              </button>
+              <button
+                onClick={() => setFilters(prev => ({ ...prev, state: 'NY' }))}
+                className="px-3 py-1 text-xs bg-white border border-gray-200 rounded-full hover:bg-gray-50"
+              >
+                New York
+              </button>
+              <button
+                onClick={() => setFilters(prev => ({ ...prev, state: 'PA' }))}
+                className="px-3 py-1 text-xs bg-white border border-gray-200 rounded-full hover:bg-gray-50"
+              >
+                Pennsylvania
+              </button>
+              <button
+                onClick={() => setFilters(prev => ({ ...prev, weightMin: '5' }))}
+                className="px-3 py-1 text-xs bg-white border border-gray-200 rounded-full hover:bg-gray-50"
+              >
+                Heavy (5+ lbs)
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Error Alert */}
@@ -663,7 +1009,12 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-6">
               <span className="font-semibold text-pickle-800">
-                {selected.size} order{selected.size > 1 ? 's' : ''} selected
+                {selectedOrders.length} order{selectedOrders.length > 1 ? 's' : ''} selected
+                {selectedOrders.length !== selected.size && (
+                  <span className="text-pickle-600 text-sm font-normal ml-1">
+                    ({selected.size} total, {selected.size - selectedOrders.length} filtered out)
+                  </span>
+                )}
               </span>
               <div className="flex items-center gap-4 text-sm text-pickle-600">
                 <span className="flex items-center gap-1">
@@ -706,7 +1057,7 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                 className="flex items-center gap-2 px-6 py-2.5 bg-pickle-600 text-white rounded-lg hover:bg-pickle-700 transition-colors disabled:opacity-50 font-medium"
               >
                 {shipping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
-                {shipping ? 'Creating...' : `Ship ${selected.size}`}
+                {shipping ? 'Creating...' : `Ship ${selectedOrders.length}`}
                 {hasAllRates && totalEstimatedCost > 0 && (
                   <span className="ml-1">(${(totalEstimatedCost / 100).toFixed(2)})</span>
                 )}
@@ -723,11 +1074,25 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
             <Loader2 className="w-8 h-8 animate-spin text-gray-400 mx-auto" />
             <p className="mt-4 text-gray-500">Loading orders...</p>
           </div>
-        ) : orders.length === 0 ? (
+        ) : filteredOrders.length === 0 ? (
           <div className="p-12 text-center">
             <Package className="w-12 h-12 text-gray-300 mx-auto" />
-            <h3 className="mt-4 text-lg font-medium text-gray-900">No pending orders</h3>
-            <p className="mt-2 text-gray-500">All orders have been fulfilled!</p>
+            <h3 className="mt-4 text-lg font-medium text-gray-900">
+              {orders.length === 0 ? 'No pending orders' : 'No orders match filters'}
+            </h3>
+            <p className="mt-2 text-gray-500">
+              {orders.length === 0 
+                ? 'All orders have been fulfilled!' 
+                : 'Try adjusting your search or filters'}
+            </p>
+            {orders.length > 0 && (
+              <button
+                onClick={clearFilters}
+                className="mt-4 px-4 py-2 text-pickle-600 hover:bg-pickle-50 rounded-lg transition-colors"
+              >
+                Clear all filters
+              </button>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -736,8 +1101,12 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                 <tr>
                   <th className="px-4 py-3 text-left w-12">
                     <button onClick={toggleSelectAll} className="p-1 hover:bg-gray-200 rounded">
-                      {selected.size === orders.length ? (
+                      {allFilteredSelected ? (
                         <CheckSquare className="w-5 h-5 text-pickle-600" />
+                      ) : someFilteredSelected ? (
+                        <div className="w-5 h-5 border-2 border-pickle-600 rounded bg-pickle-100 flex items-center justify-center">
+                          <div className="w-2 h-0.5 bg-pickle-600"></div>
+                        </div>
                       ) : (
                         <Square className="w-5 h-5 text-gray-400" />
                       )}
@@ -758,7 +1127,7 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {orders.map((order) => {
+                {filteredOrders.map((order) => {
                   const orderRate = rates[order.shopifyOrderId]
                   const hasShipTo = order.shipTo && order.shipTo.zip
                   const isExpanded = expandedOrders.has(order.shopifyOrderId)
@@ -945,6 +1314,9 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
         <div className="mt-6 flex items-center justify-between">
           <div className="text-sm text-gray-600">
             Showing {((pagination.page - 1) * pagination.perPage) + 1} - {Math.min(pagination.page * pagination.perPage, pagination.total)} of {pagination.total} orders
+            {filteredOrders.length !== orders.length && (
+              <span className="text-pickle-600"> ({filteredOrders.length} after filters)</span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => goToPage(1)} disabled={!pagination.hasPrev || loading} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed" title="First page">
@@ -990,7 +1362,7 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
         </ol>
         <div className="mt-3 pt-3 border-t border-blue-200">
           <p className="text-sm text-blue-700">
-            <strong>💡 Tip:</strong> Click ▼ to see products. Click ✏️ to edit address (calculates new rate automatically).
+            <strong>💡 Tips:</strong> Use search to find orders by #, customer, email, city or SKU. Click ▼ to see products. Click ✏️ to edit address.
           </p>
         </div>
       </div>

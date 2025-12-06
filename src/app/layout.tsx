@@ -8,6 +8,7 @@ import {
   BarChart3, 
   Wallet,
   Truck,
+  Bell,
   Settings
 } from 'lucide-react'
 
@@ -22,6 +23,7 @@ function Sidebar() {
     { href: '/orders', icon: Package, label: 'Orders' },
     { href: '/shipments', icon: Truck, label: 'Shipments' },
     { href: '/labels', icon: Printer, label: 'Print Queue' },
+    { href: '/notifications', icon: Bell, label: 'Notifications' },
     { href: '/analytics', icon: BarChart3, label: 'Analytics' },
     { href: '/wallet', icon: Wallet, label: 'Expenses' },
   ]
@@ -60,7 +62,7 @@ function Sidebar() {
       <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200">
         <div className="flex items-center gap-3 px-3 py-2 text-gray-500 text-sm">
           <Settings className="w-4 h-4" />
-          <span>v3.0 - Expense Tracker</span>
+          <span>v3.2 - Notifications</span>
         </div>
       </div>
     </aside>

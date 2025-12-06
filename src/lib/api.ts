@@ -137,7 +137,7 @@ export async function getShipments(params?: {
 export async function getRates(orderData: any) {
   return fetchAPI('/api/shipping/rates', {
     method: 'POST',
-    body: JSON.stringify({ order: orderData }),  // ← FIXED: wrap in { order: ... }
+    body: JSON.stringify({ order: orderData }),
   });
 }
 
@@ -153,7 +153,7 @@ export async function getBatchRates(orders: any[]) {
 export async function buyLabel(order: any, serviceCode = '03') {
   return fetchAPI('/api/shipping/buy', {
     method: 'POST',
-    body: JSON.stringify({ order, serviceCode }),  // ← Already correct
+    body: JSON.stringify({ order, serviceCode }),
   });
 }
 
@@ -161,7 +161,7 @@ export async function buyLabel(order: any, serviceCode = '03') {
 export async function buyBatchLabels(orders: any[], serviceCode = '03') {
   return fetchAPI('/api/shipping/buy-batch', {
     method: 'POST',
-    body: JSON.stringify({ orders, serviceCode }),  // ← Already correct
+    body: JSON.stringify({ orders, serviceCode }),
   });
 }
 
@@ -211,4 +211,190 @@ export function getBatchLabelsUrl() {
 
 export async function getFulfillmentStatus() {
   return fetchAPI('/api/fulfillment-status');
+}
+
+// ========================================
+// NOTIFICATIONS
+// ========================================
+
+/**
+ * Get notification service status (check if Resend is configured)
+ */
+export async function getNotificationStatus() {
+  return fetchAPI('/api/notifications/status');
+}
+
+/**
+ * Get notification settings
+ */
+export async function getNotificationSettings() {
+  return fetchAPI('/api/notifications/settings');
+}
+
+/**
+ * Update notification settings
+ */
+export async function updateNotificationSettings(settings: any) {
+  return fetchAPI('/api/notifications/settings', {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  });
+}
+
+/**
+ * Get all notification templates
+ */
+export async function getNotificationTemplates() {
+  return fetchAPI('/api/notifications/templates');
+}
+
+/**
+ * Get a specific template by type
+ */
+export async function getNotificationTemplate(type: string) {
+  return fetchAPI(`/api/notifications/templates/${type}`);
+}
+
+/**
+ * Update a template
+ */
+export async function updateNotificationTemplate(type: string, data: any) {
+  return fetchAPI(`/api/notifications/templates/${type}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Toggle template enabled/disabled
+ */
+export async function toggleNotificationTemplate(type: string) {
+  return fetchAPI(`/api/notifications/templates/${type}/toggle`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Seed default templates
+ */
+export async function seedNotificationTemplates() {
+  return fetchAPI('/api/notifications/templates/seed', {
+    method: 'POST',
+  });
+}
+
+/**
+ * Send a notification
+ */
+export async function sendNotification(type: string, data: {
+  orderId?: string;
+  orderNumber: string;
+  trackingNumber?: string;
+  customer: {
+    name: string;
+    email: string;
+  };
+  items?: any[];
+  shippingAddress?: any;
+  carrier?: string;
+  service?: string;
+  estimatedDelivery?: string;
+}) {
+  return fetchAPI('/api/notifications/send', {
+    method: 'POST',
+    body: JSON.stringify({ type, ...data }),
+  });
+}
+
+/**
+ * Send shipping notification (convenience method)
+ */
+export async function sendShippingNotification(order: any, shipment: any) {
+  return fetchAPI('/api/notifications/send-shipping', {
+    method: 'POST',
+    body: JSON.stringify({ order, shipment }),
+  });
+}
+
+/**
+ * Preview a notification (without sending)
+ */
+export async function previewNotification(type: string, data: any) {
+  return fetchAPI('/api/notifications/preview', {
+    method: 'POST',
+    body: JSON.stringify({ type, ...data }),
+  });
+}
+
+/**
+ * Send a test notification
+ */
+export async function sendTestNotification(type: string, email: string) {
+  return fetchAPI('/api/notifications/test', {
+    method: 'POST',
+    body: JSON.stringify({ type, email }),
+  });
+}
+
+/**
+ * Get notification logs with filters
+ */
+export async function getNotificationLogs(params?: {
+  type?: string;
+  status?: string;
+  email?: string;
+  orderNumber?: string;
+  startDate?: string;
+  endDate?: string;
+  limit?: number;
+  skip?: number;
+}) {
+  const query = new URLSearchParams();
+  if (params?.type) query.append('type', params.type);
+  if (params?.status) query.append('status', params.status);
+  if (params?.email) query.append('email', params.email);
+  if (params?.orderNumber) query.append('orderNumber', params.orderNumber);
+  if (params?.startDate) query.append('startDate', params.startDate);
+  if (params?.endDate) query.append('endDate', params.endDate);
+  if (params?.limit) query.append('limit', params.limit.toString());
+  if (params?.skip) query.append('skip', params.skip.toString());
+  
+  return fetchAPI(`/api/notifications/logs?${query}`);
+}
+
+/**
+ * Get logs for a specific order
+ */
+export async function getNotificationLogsByOrder(orderId: string) {
+  return fetchAPI(`/api/notifications/logs/order/${orderId}`);
+}
+
+/**
+ * Get a single log entry
+ */
+export async function getNotificationLog(logId: string) {
+  return fetchAPI(`/api/notifications/logs/${logId}`);
+}
+
+/**
+ * Resend a notification from log
+ */
+export async function resendNotification(logId: string) {
+  return fetchAPI(`/api/notifications/resend/${logId}`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Get notification statistics
+ */
+export async function getNotificationStats(days = 7) {
+  return fetchAPI(`/api/notifications/stats?days=${days}`);
+}
+
+/**
+ * Get dashboard data for notifications
+ */
+export async function getNotificationDashboard() {
+  return fetchAPI('/api/notifications/dashboard');
 }

@@ -60,10 +60,11 @@ interface NotificationSettings {
     website: string;
   };
   defaults: {
-    includeOrderItems: boolean;
-    includeShippingAddress: boolean;
-    includeTrackingLink: boolean;
+    autoSendOnLabel: boolean;
+    includeItemImages: boolean;
+    includeOrderTotal: boolean;
   };
+  globalEnabled: boolean;
 }
 
 interface NotificationTemplate {
@@ -874,9 +875,58 @@ function SettingsTab({
   const updateSocial = (field: string, value: string) => {
     onChange({ ...settings, socialLinks: { ...settings.socialLinks, [field]: value } })
   }
+  
+  const updateDefaults = (field: string, value: boolean) => {
+    onChange({ 
+      ...settings, 
+      defaults: { ...settings.defaults, [field]: value } 
+    })
+  }
 
   return (
     <div className="space-y-6 max-w-3xl">
+      {/* Auto-Send Settings */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Automation</h3>
+        <div className="space-y-4">
+          <label className="flex items-center justify-between p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100">
+            <div>
+              <p className="font-medium text-gray-900">Auto-send on Label Creation</p>
+              <p className="text-sm text-gray-500">Automatically send shipping notification when a label is created</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => updateDefaults('autoSendOnLabel', !settings.defaults?.autoSendOnLabel)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                settings.defaults?.autoSendOnLabel ? 'bg-pickle-600' : 'bg-gray-200'
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow ${
+                settings.defaults?.autoSendOnLabel ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
+          </label>
+          
+          <label className="flex items-center justify-between p-4 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100">
+            <div>
+              <p className="font-medium text-gray-900">Include Item Images</p>
+              <p className="text-sm text-gray-500">Show product images in notification emails</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => updateDefaults('includeItemImages', !settings.defaults?.includeItemImages)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                settings.defaults?.includeItemImages ? 'bg-pickle-600' : 'bg-gray-200'
+              }`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow ${
+                settings.defaults?.includeItemImages ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
+          </label>
+        </div>
+      </div>
+      
       {/* Sender Settings */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Sender Information</h3>

@@ -53,6 +53,53 @@ export async function getWalletAnalytics(startDate?: string, endDate?: string) {
 }
 
 // ========================================
+// BILLING (Weekly UPS tracking)
+// ========================================
+
+export async function getCurrentBillingWeek() {
+  return fetchAPI('/api/billing/current');
+}
+
+export async function getBillingHistory(weeks = 12) {
+  return fetchAPI(`/api/billing/history?weeks=${weeks}`);
+}
+
+export async function getBillingWeekDetail(weekId: string) {
+  return fetchAPI(`/api/billing/week/${weekId}`);
+}
+
+export async function enterUPSInvoice(data: {
+  weekId?: string;
+  weekStart?: string;
+  invoiceNumber: string;
+  invoiceDate?: string;
+  dueDate?: string;
+  baseCharges: number;
+  fuelSurcharge: number;
+  residentialSurcharge?: number;
+  otherCharges?: number;
+  adjustments?: number;
+  totalBilled: number;
+  notes?: string;
+}) {
+  return fetchAPI('/api/billing/invoice', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+export async function markWeekPaid(weekId: string, data: {
+  amount: number;
+  method?: string;
+  reference?: string;
+}) {
+  return fetchAPI(`/api/billing/pay/${weekId}`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+}
+
+// ========================================
 // SHIPPING
 // ========================================
 

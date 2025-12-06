@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { 
   Package, 
   RefreshCw, 
@@ -17,7 +17,12 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  ChevronDown,
+  ChevronUp,
+  Edit3,
+  X,
+  Save
 } from 'lucide-react'
 import { getUnfulfilledOrders, buyLabel, buyBatchLabels, getRates } from '@/lib/api'
 
@@ -25,6 +30,8 @@ interface OrderItem {
   name: string;
   sku: string;
   quantity: number;
+  price?: string;
+  variant_title?: string;
 }
 
 interface Order {
@@ -44,6 +51,7 @@ interface Order {
     state: string;
     zip: string;
     country: string;
+    phone?: string;
   };
   package: {
     weight: number;
@@ -87,6 +95,20 @@ interface ShipResult {
   error?: string;
 }
 
+interface EditingAddress {
+  orderId: string;
+  shipTo: {
+    name: string;
+    street1: string;
+    street2: string;
+    city: string;
+    state: string;
+    zip: string;
+    country: string;
+    phone: string;
+  };
+}
+
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([])
   const [pagination, setPagination] = useState<Pagination | null>(null)
@@ -102,6 +124,13 @@ export default function OrdersPage() {
   
   // Rates per order
   const [rates, setRates] = useState<Record<string, RateInfo>>({})
+  
+  // Expanded orders (for accordion)
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set())
+  
+  // Editing address
+  const [editingAddress, setEditingAddress] = useState<EditingAddress | null>(null)
+  const [savingAddress, setSavingAddress] = useState(false)
 
   async function loadOrders(page: number = 1, refresh: boolean = false) {
     setLoading(true)
@@ -114,7 +143,8 @@ export default function OrdersPage() {
       setPagination(data.pagination || null)
       setCurrentPage(page)
       if (refresh) {
-        setRates({}) // Reset rates when refreshing
+        setRates({})
+        setExpandedOrders(new Set())
       }
     } catch (err: any) {
       setError(err.message)
@@ -143,6 +173,66 @@ export default function OrdersPage() {
     } else {
       setSelected(new Set(orders.map(o => o.shopifyOrderId)))
     }
+  }
+  
+  // Toggle accordion
+  function toggleExpanded(orderId: string) {
+    const newExpanded = new Set(expandedOrders)
+    if (newExpanded.has(orderId)) {
+      newExpanded.delete(orderId)
+    } else {
+      newExpanded.add(orderId)
+    }
+    setExpandedOrders(newExpanded)
+  }
+  
+  // Open edit address modal
+  function openEditAddress(order: Order) {
+    setEditingAddress({
+      orderId: order.shopifyOrderId,
+      shipTo: {
+        name: order.shipTo?.name || '',
+        street1: order.shipTo?.street1 || '',
+        street2: order.shipTo?.street2 || '',
+        city: order.shipTo?.city || '',
+        state: order.shipTo?.state || '',
+        zip: order.shipTo?.zip || '',
+        country: order.shipTo?.country || 'US',
+        phone: order.shipTo?.phone || order.customer?.phone || ''
+      }
+    })
+  }
+  
+  // Save edited address (local only - updates the order in state)
+  function saveAddress() {
+    if (!editingAddress) return
+    
+    setSavingAddress(true)
+    
+    // Update order in local state
+    setOrders(prev => prev.map(order => {
+      if (order.shopifyOrderId === editingAddress.orderId) {
+        return {
+          ...order,
+          shipTo: {
+            ...order.shipTo,
+            ...editingAddress.shipTo
+          }
+        }
+      }
+      return order
+    }))
+    
+    // Clear rate for this order since address changed
+    setRates(prev => {
+      const newRates = { ...prev }
+      delete newRates[editingAddress.orderId]
+      return newRates
+    })
+    
+    setSavingAddress(false)
+    setEditingAddress(null)
+    setSuccess(`✓ Address updated for order. Click "Get Rates" to recalculate shipping.`)
   }
 
   // Get rates for selected orders
@@ -303,7 +393,8 @@ export default function OrdersPage() {
   // Pagination handlers
   function goToPage(page: number) {
     if (page >= 1 && page <= (pagination?.totalPages || 1)) {
-      setSelected(new Set()) // Clear selection when changing pages
+      setSelected(new Set())
+      setExpandedOrders(new Set())
       loadOrders(page)
     }
   }
@@ -317,7 +408,6 @@ export default function OrdersPage() {
     return sum + (rate?.rate || 0)
   }, 0)
   
-  // Calculate total shipping paid by customers and profit
   const totalCustomerPaid = selectedOrders.reduce((sum, o) => {
     return sum + (parseFloat(o.shippingPaid?.amount || '0') * 100)
   }, 0)
@@ -503,6 +593,7 @@ export default function OrdersPage() {
                       )}
                     </button>
                   </th>
+                  <th className="px-4 py-3 text-left w-10"></th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Order</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Customer</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Destination</th>
@@ -513,126 +604,230 @@ export default function OrdersPage() {
                     <div>UPS Rate</div>
                     <div className="font-normal text-gray-400 normal-case">vs Customer Paid</div>
                   </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase w-16">Edit</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {orders.map((order) => {
                   const orderRate = rates[order.shopifyOrderId]
                   const hasShipTo = order.shipTo && order.shipTo.zip
+                  const isExpanded = expandedOrders.has(order.shopifyOrderId)
                   
                   return (
-                    <tr 
-                      key={order.shopifyOrderId}
-                      className={`hover:bg-gray-50 transition-colors ${selected.has(order.shopifyOrderId) ? 'bg-pickle-50 hover:bg-pickle-100' : ''}`}
-                    >
-                      <td className="px-4 py-4">
-                        <button 
-                          onClick={() => toggleSelect(order.shopifyOrderId)}
-                          className="p-1 hover:bg-gray-200 rounded"
-                        >
-                          {selected.has(order.shopifyOrderId) ? (
-                            <CheckSquare className="w-5 h-5 text-pickle-600" />
-                          ) : (
-                            <Square className="w-5 h-5 text-gray-400" />
-                          )}
-                        </button>
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="font-semibold text-gray-900">{order.orderNumber}</div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          {new Date(order.orderDate).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}
-                        </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="font-medium text-gray-900">{order.customer?.name || 'N/A'}</div>
-                        <div className="text-xs text-gray-500 mt-1 truncate max-w-[150px]">
-                          {order.customer?.email || ''}
-                        </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        {hasShipTo ? (
-                          <div className="flex items-start gap-2">
-                            <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
-                            <div>
-                              <div className="text-gray-900">
-                                {order.shipTo.city}, {order.shipTo.state}
-                              </div>
-                              <div className="text-xs text-gray-500 mt-1">
-                                {order.shipTo.zip}
+                    <Fragment key={order.shopifyOrderId}>
+                      <tr 
+                        className={`hover:bg-gray-50 transition-colors ${selected.has(order.shopifyOrderId) ? 'bg-pickle-50 hover:bg-pickle-100' : ''}`}
+                      >
+                        <td className="px-4 py-4">
+                          <button 
+                            onClick={() => toggleSelect(order.shopifyOrderId)}
+                            className="p-1 hover:bg-gray-200 rounded"
+                          >
+                            {selected.has(order.shopifyOrderId) ? (
+                              <CheckSquare className="w-5 h-5 text-pickle-600" />
+                            ) : (
+                              <Square className="w-5 h-5 text-gray-400" />
+                            )}
+                          </button>
+                        </td>
+                        <td className="px-2 py-4">
+                          <button 
+                            onClick={() => toggleExpanded(order.shopifyOrderId)}
+                            className="p-1.5 hover:bg-gray-200 rounded-lg transition-colors"
+                            title={isExpanded ? 'Hide products' : 'Show products'}
+                          >
+                            {isExpanded ? (
+                              <ChevronUp className="w-4 h-4 text-gray-500" />
+                            ) : (
+                              <ChevronDown className="w-4 h-4 text-gray-400" />
+                            )}
+                          </button>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="font-semibold text-gray-900">{order.orderNumber}</div>
+                          <div className="text-xs text-gray-500 mt-1">
+                            {new Date(order.orderDate).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </div>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="font-medium text-gray-900">{order.customer?.name || 'N/A'}</div>
+                          <div className="text-xs text-gray-500 mt-1 truncate max-w-[150px]">
+                            {order.customer?.email || ''}
+                          </div>
+                        </td>
+                        <td className="px-4 py-4">
+                          {hasShipTo ? (
+                            <div className="flex items-start gap-2">
+                              <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <div className="text-gray-900">
+                                  {order.shipTo.city}, {order.shipTo.state}
+                                </div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {order.shipTo.zip}
+                                </div>
                               </div>
                             </div>
+                          ) : (
+                            <span className="text-red-500 text-sm">No address</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="flex items-center gap-2">
+                            <Scale className="w-4 h-4 text-gray-400" />
+                            <span className="font-medium">{order.package?.weight?.toFixed(1) || '1.0'} lbs</span>
                           </div>
-                        ) : (
-                          <span className="text-red-500 text-sm">No address</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex items-center gap-2">
-                          <Scale className="w-4 h-4 text-gray-400" />
-                          <span className="font-medium">{order.package?.weight?.toFixed(1) || '1.0'} lbs</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                          {order.items?.length || 0} items
-                        </span>
-                      </td>
-                      <td className="px-4 py-4">
-                        <span className="font-medium text-gray-900">${order.totals?.total || '0.00'}</span>
-                      </td>
-                      <td className="px-4 py-4 bg-blue-50">
-                        {orderRate?.loading ? (
-                          <div className="flex items-center gap-2 text-gray-400">
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            <span className="text-sm">...</span>
-                          </div>
-                        ) : orderRate?.error ? (
-                          <span className="text-xs text-red-500" title={orderRate.error}>Error</span>
-                        ) : orderRate?.rateFormatted ? (
-                          <div>
-                            <span className="font-bold text-green-600 text-lg">{orderRate.rateFormatted}</span>
-                            <div className="text-xs text-gray-500">{orderRate.service}</div>
-                            {/* Show comparison with what customer paid */}
-                            {order.shippingPaid && (
-                              <div className="mt-1 pt-1 border-t border-blue-200">
-                                <div className="text-xs text-gray-600">
-                                  Paid: <span className="font-semibold">${parseFloat(order.shippingPaid.amount || '0').toFixed(2)}</span>
+                        </td>
+                        <td className="px-4 py-4">
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                            {order.items?.length || 0} items
+                          </span>
+                        </td>
+                        <td className="px-4 py-4">
+                          <span className="font-medium text-gray-900">${order.totals?.total || '0.00'}</span>
+                        </td>
+                        <td className="px-4 py-4 bg-blue-50">
+                          {orderRate?.loading ? (
+                            <div className="flex items-center gap-2 text-gray-400">
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span className="text-sm">...</span>
+                            </div>
+                          ) : orderRate?.error ? (
+                            <span className="text-xs text-red-500" title={orderRate.error}>Error</span>
+                          ) : orderRate?.rateFormatted ? (
+                            <div>
+                              <span className="font-bold text-green-600 text-lg">{orderRate.rateFormatted}</span>
+                              <div className="text-xs text-gray-500">{orderRate.service}</div>
+                              {order.shippingPaid && (
+                                <div className="mt-1 pt-1 border-t border-blue-200">
+                                  <div className="text-xs text-gray-600">
+                                    Paid: <span className="font-semibold">${parseFloat(order.shippingPaid.amount || '0').toFixed(2)}</span>
+                                  </div>
+                                  {(() => {
+                                    const paid = parseFloat(order.shippingPaid.amount || '0') * 100;
+                                    const cost = orderRate.rate || 0;
+                                    const diff = paid - cost;
+                                    const diffFormatted = `$${Math.abs(diff / 100).toFixed(2)}`;
+                                    if (diff > 0) {
+                                      return <div className="text-xs font-semibold text-green-600">+{diffFormatted} profit</div>;
+                                    } else if (diff < 0) {
+                                      return <div className="text-xs font-semibold text-red-600">-{diffFormatted} loss</div>;
+                                    }
+                                    return <div className="text-xs text-gray-500">Break even</div>;
+                                  })()}
                                 </div>
-                                {(() => {
-                                  const paid = parseFloat(order.shippingPaid.amount || '0') * 100;
-                                  const cost = orderRate.rate || 0;
-                                  const diff = paid - cost;
-                                  const diffFormatted = `$${Math.abs(diff / 100).toFixed(2)}`;
-                                  if (diff > 0) {
-                                    return <div className="text-xs font-semibold text-green-600">+{diffFormatted} profit</div>;
-                                  } else if (diff < 0) {
-                                    return <div className="text-xs font-semibold text-red-600">-{diffFormatted} loss</div>;
-                                  }
-                                  return <div className="text-xs text-gray-500">Break even</div>;
-                                })()}
+                              )}
+                            </div>
+                          ) : hasShipTo ? (
+                            <div>
+                              <span className="text-gray-400 text-sm">Get Rates</span>
+                              {order.shippingPaid && parseFloat(order.shippingPaid.amount || '0') > 0 && (
+                                <div className="mt-1 text-xs text-gray-500">
+                                  Paid: ${parseFloat(order.shippingPaid.amount).toFixed(2)}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-red-400 text-sm">N/A</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-4">
+                          <button
+                            onClick={() => openEditAddress(order)}
+                            className="p-2 text-gray-400 hover:text-pickle-600 hover:bg-pickle-50 rounded-lg transition-colors"
+                            title="Edit shipping address"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                      
+                      {/* Expanded Products Row */}
+                      {isExpanded && (
+                        <tr className="bg-gray-50">
+                          <td colSpan={10} className="px-4 py-0">
+                            <div className="py-4 pl-14 pr-4">
+                              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                                <div className="px-4 py-2 bg-gray-100 border-b border-gray-200">
+                                  <span className="text-sm font-medium text-gray-700">
+                                    📦 Products in Order {order.orderNumber}
+                                  </span>
+                                </div>
+                                <table className="w-full">
+                                  <thead className="bg-gray-50">
+                                    <tr>
+                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
+                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">SKU</th>
+                                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Variant</th>
+                                      <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase">Qty</th>
+                                      <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Price</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-gray-100">
+                                    {order.items && order.items.length > 0 ? (
+                                      order.items.map((item, idx) => (
+                                        <tr key={idx} className="hover:bg-gray-50">
+                                          <td className="px-4 py-3">
+                                            <span className="font-medium text-gray-900">{item.name || 'Unknown Product'}</span>
+                                          </td>
+                                          <td className="px-4 py-3">
+                                            <span className="text-sm text-gray-500 font-mono">{item.sku || '-'}</span>
+                                          </td>
+                                          <td className="px-4 py-3">
+                                            <span className="text-sm text-gray-500">{item.variant_title || '-'}</span>
+                                          </td>
+                                          <td className="px-4 py-3 text-center">
+                                            <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-pickle-100 text-pickle-700 font-semibold text-sm">
+                                              {item.quantity}
+                                            </span>
+                                          </td>
+                                          <td className="px-4 py-3 text-right">
+                                            <span className="font-medium text-gray-900">
+                                              {item.price ? `$${parseFloat(item.price).toFixed(2)}` : '-'}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      ))
+                                    ) : (
+                                      <tr>
+                                        <td colSpan={5} className="px-4 py-6 text-center text-gray-500">
+                                          No product details available
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </tbody>
+                                </table>
+                                
+                                {/* Ship To Details */}
+                                {order.shipTo && (
+                                  <div className="px-4 py-3 bg-blue-50 border-t border-gray-200">
+                                    <div className="flex items-start gap-3">
+                                      <MapPin className="w-4 h-4 text-blue-500 mt-0.5" />
+                                      <div className="text-sm">
+                                        <div className="font-medium text-gray-900">{order.shipTo.name}</div>
+                                        <div className="text-gray-600">{order.shipTo.street1}</div>
+                                        {order.shipTo.street2 && <div className="text-gray-600">{order.shipTo.street2}</div>}
+                                        <div className="text-gray-600">
+                                          {order.shipTo.city}, {order.shipTo.state} {order.shipTo.zip}
+                                        </div>
+                                        {order.shipTo.phone && (
+                                          <div className="text-gray-500 mt-1">📞 {order.shipTo.phone}</div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        ) : hasShipTo ? (
-                          <div>
-                            <span className="text-gray-400 text-sm">Get Rates</span>
-                            {/* Still show what customer paid even without rate */}
-                            {order.shippingPaid && parseFloat(order.shippingPaid.amount || '0') > 0 && (
-                              <div className="mt-1 text-xs text-gray-500">
-                                Paid: ${parseFloat(order.shippingPaid.amount).toFixed(2)}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-red-400 text-sm">N/A</span>
-                        )}
-                      </td>
-                    </tr>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -648,7 +843,6 @@ export default function OrdersPage() {
             Showing {((pagination.page - 1) * pagination.perPage) + 1} - {Math.min(pagination.page * pagination.perPage, pagination.total)} of {pagination.total} orders
           </div>
           <div className="flex items-center gap-2">
-            {/* First */}
             <button
               onClick={() => goToPage(1)}
               disabled={!pagination.hasPrev || loading}
@@ -658,7 +852,6 @@ export default function OrdersPage() {
               <ChevronsLeft className="w-4 h-4" />
             </button>
             
-            {/* Previous */}
             <button
               onClick={() => goToPage(pagination.page - 1)}
               disabled={!pagination.hasPrev || loading}
@@ -668,7 +861,6 @@ export default function OrdersPage() {
               <ChevronLeft className="w-4 h-4" />
             </button>
             
-            {/* Page numbers */}
             <div className="flex items-center gap-1">
               {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
                 let pageNum;
@@ -699,7 +891,6 @@ export default function OrdersPage() {
               })}
             </div>
             
-            {/* Next */}
             <button
               onClick={() => goToPage(pagination.page + 1)}
               disabled={!pagination.hasNext || loading}
@@ -709,7 +900,6 @@ export default function OrdersPage() {
               <ChevronRight className="w-4 h-4" />
             </button>
             
-            {/* Last */}
             <button
               onClick={() => goToPage(pagination.totalPages)}
               disabled={!pagination.hasNext || loading}
@@ -728,10 +918,184 @@ export default function OrdersPage() {
         <ol className="text-sm text-blue-700 space-y-1 list-decimal list-inside">
           <li>Select orders using checkboxes</li>
           <li>Click <strong>&quot;Get Rates&quot;</strong> to see UPS shipping cost</li>
-          <li>Review rates in blue &quot;Ship Rate&quot; column</li>
+          <li>Review rates in blue &quot;UPS Rate&quot; column</li>
           <li>Click <strong>&quot;Ship&quot;</strong> to create labels</li>
         </ol>
+        <div className="mt-3 pt-3 border-t border-blue-200">
+          <p className="text-sm text-blue-700">
+            <strong>💡 Tip:</strong> Click ▼ to expand order and see products. Click ✏️ to edit shipping address.
+          </p>
+        </div>
       </div>
+      
+      {/* Edit Address Modal */}
+      {editingAddress && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+            {/* Modal Header */}
+            <div className="px-6 py-4 bg-pickle-600 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <MapPin className="w-5 h-5" />
+                <span className="font-semibold">Edit Shipping Address</span>
+              </div>
+              <button 
+                onClick={() => setEditingAddress(null)}
+                className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            {/* Modal Body */}
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Recipient Name *
+                </label>
+                <input
+                  type="text"
+                  value={editingAddress.shipTo.name}
+                  onChange={(e) => setEditingAddress({
+                    ...editingAddress,
+                    shipTo: { ...editingAddress.shipTo, name: e.target.value }
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                  placeholder="John Doe"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Street Address *
+                </label>
+                <input
+                  type="text"
+                  value={editingAddress.shipTo.street1}
+                  onChange={(e) => setEditingAddress({
+                    ...editingAddress,
+                    shipTo: { ...editingAddress.shipTo, street1: e.target.value }
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                  placeholder="123 Main St"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Apt/Suite/Unit
+                </label>
+                <input
+                  type="text"
+                  value={editingAddress.shipTo.street2}
+                  onChange={(e) => setEditingAddress({
+                    ...editingAddress,
+                    shipTo: { ...editingAddress.shipTo, street2: e.target.value }
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                  placeholder="Apt 4B"
+                />
+              </div>
+              
+              <div className="grid grid-cols-6 gap-3">
+                <div className="col-span-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    City *
+                  </label>
+                  <input
+                    type="text"
+                    value={editingAddress.shipTo.city}
+                    onChange={(e) => setEditingAddress({
+                      ...editingAddress,
+                      shipTo: { ...editingAddress.shipTo, city: e.target.value }
+                    })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                    placeholder="Newark"
+                  />
+                </div>
+                
+                <div className="col-span-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    State *
+                  </label>
+                  <input
+                    type="text"
+                    value={editingAddress.shipTo.state}
+                    onChange={(e) => setEditingAddress({
+                      ...editingAddress,
+                      shipTo: { ...editingAddress.shipTo, state: e.target.value.toUpperCase() }
+                    })}
+                    maxLength={2}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500 uppercase"
+                    placeholder="NJ"
+                  />
+                </div>
+                
+                <div className="col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    ZIP Code *
+                  </label>
+                  <input
+                    type="text"
+                    value={editingAddress.shipTo.zip}
+                    onChange={(e) => setEditingAddress({
+                      ...editingAddress,
+                      shipTo: { ...editingAddress.shipTo, zip: e.target.value }
+                    })}
+                    maxLength={10}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                    placeholder="07102"
+                  />
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Phone
+                </label>
+                <input
+                  type="tel"
+                  value={editingAddress.shipTo.phone}
+                  onChange={(e) => setEditingAddress({
+                    ...editingAddress,
+                    shipTo: { ...editingAddress.shipTo, phone: e.target.value }
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                  placeholder="(555) 123-4567"
+                />
+              </div>
+              
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <p className="text-sm text-amber-700">
+                  ⚠️ <strong>Note:</strong> This change is temporary and only affects this shipping session. 
+                  The original Shopify order will not be updated.
+                </p>
+              </div>
+            </div>
+            
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-200 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setEditingAddress(null)}
+                className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveAddress}
+                disabled={savingAddress || !editingAddress.shipTo.name || !editingAddress.shipTo.street1 || !editingAddress.shipTo.city || !editingAddress.shipTo.state || !editingAddress.shipTo.zip}
+                className="flex items-center gap-2 px-4 py-2 bg-pickle-600 text-white rounded-lg hover:bg-pickle-700 transition-colors font-medium disabled:opacity-50"
+              >
+                {savingAddress ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4" />
+                )}
+                Save & Recalculate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

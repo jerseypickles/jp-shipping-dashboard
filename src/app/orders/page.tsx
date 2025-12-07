@@ -31,7 +31,9 @@ import {
   Filter,
   Calendar,
   XCircle,
-  Box
+  Box,
+  Mail,
+  Send
 } from 'lucide-react'
 import { getUnfulfilledOrders, buyLabel, buyBatchLabels, getRates } from '@/lib/api'
 
@@ -107,6 +109,10 @@ interface ShipResult {
 interface EditingAddress {
   orderId: string;
   orderNumber: string;
+  customer: {
+    name: string;
+    email: string;
+  };
   originalShipTo: {
     name: string;
     street1: string;
@@ -196,6 +202,8 @@ export default function OrdersPage() {
   const [editingAddress, setEditingAddress] = useState<EditingAddress | null>(null)
   const [savingAddress, setSavingAddress] = useState(false)
   const [copiedInvoice, setCopiedInvoice] = useState(false)
+  const [sendingInvoice, setSendingInvoice] = useState(false)
+  const [invoiceSent, setInvoiceSent] = useState(false)
   
   // Search & Filter state
   const [filters, setFilters] = useState<Filters>({
@@ -391,9 +399,16 @@ export default function OrdersPage() {
       height: order.package?.height || 12
     }
     
+    // Reset invoice state when opening modal
+    setInvoiceSent(false)
+    
     setEditingAddress({
       orderId: order.shopifyOrderId,
       orderNumber: order.orderNumber,
+      customer: {
+        name: order.customer?.name || order.shipTo?.name || '',
+        email: order.customer?.email || ''
+      },
       originalShipTo: {
         name: order.shipTo?.name || '',
         street1: order.shipTo?.street1 || '',
@@ -556,6 +571,50 @@ export default function OrdersPage() {
     navigator.clipboard.writeText(text)
     setCopiedInvoice(true)
     setTimeout(() => setCopiedInvoice(false), 2000)
+  }
+  
+  async function sendInvoiceEmail() {
+    if (!editingAddress || editingAddress.newRate === null) return
+    if (!editingAddress.customer?.email) {
+      setError('Customer email is required to send invoice')
+      return
+    }
+    
+    setSendingInvoice(true)
+    setError(null)
+    
+    try {
+      const response = await fetch('/api/shipping/send-invoice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          orderNumber: editingAddress.orderNumber,
+          customer: editingAddress.customer,
+          originalAddress: editingAddress.originalShipTo,
+          newAddress: editingAddress.shipTo,
+          originalPackage: editingAddress.originalPackage,
+          newPackage: editingAddress.package,
+          customerPaid: editingAddress.customerPaid,
+          originalRate: editingAddress.originalRate,
+          newRate: editingAddress.newRate,
+          addressChanged: hasAddressChanged(),
+          packageChanged: hasPackageChanged()
+        })
+      })
+      
+      const result = await response.json()
+      
+      if (result.success) {
+        setInvoiceSent(true)
+        setSuccess(`📧 Invoice sent to ${editingAddress.customer.email}! Additional charge: ${result.additionalCost}`)
+      } else {
+        setError(result.error || 'Failed to send invoice')
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to send invoice')
+    } finally {
+      setSendingInvoice(false)
+    }
   }
   
   function saveAddress() {
@@ -1828,14 +1887,38 @@ export default function OrdersPage() {
             {/* Modal Footer */}
             <div className="px-6 py-4 bg-gray-50 border-t border-gray-200">
               <div className="flex items-center justify-between">
-                {/* Left side - Copy Invoice button */}
-                <div>
+                {/* Left side - Invoice actions */}
+                <div className="flex items-center gap-2">
                   {anyChanges && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 && (
-                    <button onClick={copyInvoiceText}
-                      className="flex items-center gap-2 px-3 py-2 text-amber-700 bg-amber-100 border border-amber-300 rounded-lg hover:bg-amber-200 transition-colors text-sm font-medium">
-                      <Copy className="w-4 h-4" />
-                      {copiedInvoice ? 'Copied!' : 'Copy Invoice for Customer'}
-                    </button>
+                    <>
+                      {/* Send Invoice Email Button */}
+                      {editingAddress.customer?.email ? (
+                        invoiceSent ? (
+                          <div className="flex items-center gap-2 px-3 py-2 text-green-700 bg-green-100 border border-green-300 rounded-lg text-sm font-medium">
+                            <CheckCircle className="w-4 h-4" />
+                            Invoice Sent!
+                          </div>
+                        ) : (
+                          <button 
+                            onClick={sendInvoiceEmail}
+                            disabled={sendingInvoice}
+                            className="flex items-center gap-2 px-3 py-2 text-blue-700 bg-blue-100 border border-blue-300 rounded-lg hover:bg-blue-200 transition-colors text-sm font-medium disabled:opacity-50"
+                          >
+                            {sendingInvoice ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                            {sendingInvoice ? 'Sending...' : 'Send Invoice Email'}
+                          </button>
+                        )
+                      ) : (
+                        <div className="text-xs text-gray-500 italic">No customer email</div>
+                      )}
+                      
+                      {/* Copy Invoice Button */}
+                      <button onClick={copyInvoiceText}
+                        className="flex items-center gap-2 px-3 py-2 text-amber-700 bg-amber-100 border border-amber-300 rounded-lg hover:bg-amber-200 transition-colors text-sm font-medium">
+                        <Copy className="w-4 h-4" />
+                        {copiedInvoice ? 'Copied!' : 'Copy Text'}
+                      </button>
+                    </>
                   )}
                 </div>
                 
@@ -1862,6 +1945,14 @@ export default function OrdersPage() {
                   )}
                 </div>
               </div>
+              
+              {/* Customer email info */}
+              {anyChanges && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 && editingAddress.customer?.email && (
+                <div className="mt-3 pt-3 border-t border-gray-200 text-xs text-gray-500 flex items-center gap-2">
+                  <Mail className="w-3.5 h-3.5" />
+                  Invoice will be sent to: <span className="font-medium text-gray-700">{editingAddress.customer.email}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>

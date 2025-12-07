@@ -158,10 +158,10 @@ export async function buyLabel(order: any, serviceCode = '03') {
 }
 
 // Buy multiple labels
-export async function buyBatchLabels(orders: any[], serviceCode = '03') {
+export async function buyBatchLabels(orders: any[], serviceCode = '03', sendNotifications = true) {
   return fetchAPI('/api/shipping/buy-batch', {
     method: 'POST',
-    body: JSON.stringify({ orders, serviceCode }),
+    body: JSON.stringify({ orders, serviceCode, sendNotifications }),
   });
 }
 

@@ -13,7 +13,11 @@ import {
   ExternalLink,
   Loader2,
   Trash2,
-  X
+  X,
+  Eye,
+  EyeOff,
+  ArrowUpDown,
+  Filter
 } from 'lucide-react'
 import { getShipments, voidLabel } from '@/lib/api'
 
@@ -31,24 +35,30 @@ interface Shipment {
   createdAt: string;
 }
 
-const statusConfig: Record<string, { icon: any; color: string; label: string }> = {
-  pending: { icon: Clock, color: 'bg-gray-100 text-gray-700', label: 'Pending' },
-  label_created: { icon: Package, color: 'bg-blue-100 text-blue-700', label: 'Label Created' },
-  printed: { icon: Package, color: 'bg-indigo-100 text-indigo-700', label: 'Printed' },
-  shipped: { icon: Truck, color: 'bg-purple-100 text-purple-700', label: 'Picked Up' },
-  in_transit: { icon: Truck, color: 'bg-yellow-100 text-yellow-700', label: 'In Transit' },
-  out_for_delivery: { icon: Truck, color: 'bg-orange-100 text-orange-700', label: 'Out for Delivery' },
-  delivered: { icon: CheckCircle, color: 'bg-green-100 text-green-700', label: 'Delivered' },
-  exception: { icon: AlertCircle, color: 'bg-red-100 text-red-700', label: 'Exception' },
-  voided: { icon: XCircle, color: 'bg-gray-100 text-gray-500', label: 'Voided' },
+const statusConfig: Record<string, { icon: any; color: string; label: string; order: number }> = {
+  pending: { icon: Clock, color: 'bg-gray-100 text-gray-700', label: 'Pending', order: 1 },
+  label_created: { icon: Package, color: 'bg-blue-100 text-blue-700', label: 'Label Created', order: 2 },
+  printed: { icon: Package, color: 'bg-indigo-100 text-indigo-700', label: 'Printed', order: 3 },
+  shipped: { icon: Truck, color: 'bg-purple-100 text-purple-700', label: 'Picked Up', order: 4 },
+  in_transit: { icon: Truck, color: 'bg-yellow-100 text-yellow-700', label: 'In Transit', order: 5 },
+  out_for_delivery: { icon: Truck, color: 'bg-orange-100 text-orange-700', label: 'Out for Delivery', order: 6 },
+  delivered: { icon: CheckCircle, color: 'bg-green-100 text-green-700', label: 'Delivered', order: 7 },
+  exception: { icon: AlertCircle, color: 'bg-red-100 text-red-700', label: 'Exception', order: 8 },
+  voided: { icon: XCircle, color: 'bg-gray-100 text-gray-500', label: 'Voided', order: 9 },
 }
+
+type SortField = 'date' | 'order' | 'status' | 'cost'
+type SortOrder = 'asc' | 'desc'
 
 export default function ShipmentsPage() {
   const [shipments, setShipments] = useState<Shipment[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-  const [filter, setFilter] = useState<string>('all')
+  const [filter, setFilter] = useState<string>('active') // Changed default to 'active'
+  const [showVoided, setShowVoided] = useState(false)
+  const [sortField, setSortField] = useState<SortField>('date')
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   
   // Void modal state
   const [voidingShipment, setVoidingShipment] = useState<Shipment | null>(null)
@@ -60,10 +70,8 @@ export default function ShipmentsPage() {
     setError(null)
     
     try {
-      const params: any = { limit: 100 }
-      if (filter !== 'all') params.status = filter
-      
-      const data = await getShipments(params)
+      // Always fetch all, we filter client-side for better UX
+      const data = await getShipments({ limit: 200 })
       setShipments(data.shipments || [])
     } catch (err: any) {
       setError(err.message)
@@ -74,7 +82,7 @@ export default function ShipmentsPage() {
 
   useEffect(() => {
     loadShipments()
-  }, [filter])
+  }, [])
 
   async function handleVoidLabel() {
     if (!voidingShipment) return
@@ -104,22 +112,83 @@ export default function ShipmentsPage() {
   }
 
   function canVoid(shipment: Shipment): boolean {
-    // Can only void labels that haven't been shipped yet
     return ['label_created', 'printed'].includes(shipment.status)
   }
 
+  // Filter shipments
+  const filteredShipments = shipments.filter(s => {
+    // First apply voided filter
+    if (!showVoided && s.status === 'voided') return false
+    
+    // Then apply status filter
+    switch (filter) {
+      case 'active':
+        return !['delivered', 'voided'].includes(s.status)
+      case 'label_created':
+        return s.status === 'label_created'
+      case 'printed':
+        return s.status === 'printed'
+      case 'in_transit':
+        return ['in_transit', 'out_for_delivery', 'shipped'].includes(s.status)
+      case 'delivered':
+        return s.status === 'delivered'
+      case 'exception':
+        return s.status === 'exception'
+      case 'voided':
+        return s.status === 'voided'
+      case 'all':
+      default:
+        return true
+    }
+  })
+
+  // Sort shipments
+  const sortedShipments = [...filteredShipments].sort((a, b) => {
+    let comparison = 0
+    
+    switch (sortField) {
+      case 'date':
+        comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        break
+      case 'order':
+        comparison = a.orderNumber.localeCompare(b.orderNumber)
+        break
+      case 'status':
+        comparison = (statusConfig[a.status]?.order || 0) - (statusConfig[b.status]?.order || 0)
+        break
+      case 'cost':
+        comparison = (a.costCents || 0) - (b.costCents || 0)
+        break
+    }
+    
+    return sortOrder === 'desc' ? -comparison : comparison
+  })
+
+  function toggleSort(field: SortField) {
+    if (sortField === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortOrder('desc')
+    }
+  }
+
   const filters = [
-    { value: 'all', label: 'All' },
-    { value: 'label_created', label: 'Label Created' },
-    { value: 'in_transit', label: 'In Transit' },
-    { value: 'delivered', label: 'Delivered' },
-    { value: 'voided', label: 'Voided' },
+    { value: 'active', label: 'Active', count: shipments.filter(s => !['delivered', 'voided'].includes(s.status)).length },
+    { value: 'label_created', label: 'Labels', count: shipments.filter(s => s.status === 'label_created').length },
+    { value: 'printed', label: 'Printed', count: shipments.filter(s => s.status === 'printed').length },
+    { value: 'in_transit', label: 'In Transit', count: shipments.filter(s => ['in_transit', 'out_for_delivery', 'shipped'].includes(s.status)).length },
+    { value: 'delivered', label: 'Delivered', count: shipments.filter(s => s.status === 'delivered').length },
+    { value: 'exception', label: 'Exceptions', count: shipments.filter(s => s.status === 'exception').length },
+    { value: 'all', label: 'All', count: showVoided ? shipments.length : shipments.filter(s => s.status !== 'voided').length },
   ]
 
-  // Calculate totals
+  // Calculate totals (excluding voided)
   const totalCost = shipments
     .filter(s => s.status !== 'voided')
     .reduce((sum, s) => sum + (s.costCents || 0), 0)
+  
+  const voidedCount = shipments.filter(s => s.status === 'voided').length
 
   return (
     <div className="p-8">
@@ -128,34 +197,79 @@ export default function ShipmentsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Shipments</h1>
           <p className="text-gray-500 mt-1">
-            {shipments.length} shipments · Total: ${(totalCost / 100).toFixed(2)}
+            {sortedShipments.length} shipments shown · Total: ${(totalCost / 100).toFixed(2)}
+            {voidedCount > 0 && !showVoided && (
+              <span className="text-gray-400 ml-2">({voidedCount} voided hidden)</span>
+            )}
           </p>
         </div>
-        <button
-          onClick={loadShipments}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Show/Hide Voided Toggle */}
+          <button
+            onClick={() => setShowVoided(!showVoided)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              showVoided 
+                ? 'bg-gray-200 text-gray-700' 
+                : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            {showVoided ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+            {showVoided ? 'Showing Voided' : 'Voided Hidden'}
+          </button>
+          
+          <button
+            onClick={loadShipments}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
-      <div className="mb-6 flex items-center gap-2">
+      <div className="mb-6 flex items-center gap-2 flex-wrap">
+        <Filter className="w-4 h-4 text-gray-400" />
         {filters.map((f) => (
           <button
             key={f.value}
             onClick={() => setFilter(f.value)}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               filter === f.value
                 ? 'bg-pickle-600 text-white'
                 : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
             }`}
           >
             {f.label}
+            {f.count > 0 && (
+              <span className={`ml-1.5 px-1.5 py-0.5 rounded text-xs ${
+                filter === f.value ? 'bg-pickle-500' : 'bg-gray-100'
+              }`}>
+                {f.count}
+              </span>
+            )}
           </button>
         ))}
+        
+        {/* Show Voided filter only when showVoided is true */}
+        {showVoided && (
+          <button
+            onClick={() => setFilter('voided')}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              filter === 'voided'
+                ? 'bg-gray-600 text-white'
+                : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'
+            }`}
+          >
+            Voided
+            <span className={`ml-1.5 px-1.5 py-0.5 rounded text-xs ${
+              filter === 'voided' ? 'bg-gray-500' : 'bg-gray-100'
+            }`}>
+              {voidedCount}
+            </span>
+          </button>
+        )}
       </div>
 
       {/* Alerts */}
@@ -186,31 +300,65 @@ export default function ShipmentsPage() {
             <Loader2 className="w-8 h-8 animate-spin text-gray-400 mx-auto" />
             <p className="mt-4 text-gray-500">Loading shipments...</p>
           </div>
-        ) : shipments.length === 0 ? (
+        ) : sortedShipments.length === 0 ? (
           <div className="p-12 text-center">
             <Truck className="w-12 h-12 text-gray-300 mx-auto" />
             <h3 className="mt-4 text-lg font-medium text-gray-900">No shipments found</h3>
-            <p className="mt-2 text-gray-500">Create labels from the Orders page</p>
+            <p className="mt-2 text-gray-500">
+              {filter !== 'all' ? 'Try changing filters or ' : ''}Create labels from the Orders page
+            </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Order</th>
+                  <th className="px-4 py-3 text-left">
+                    <button 
+                      onClick={() => toggleSort('order')}
+                      className="flex items-center gap-1 text-xs font-semibold text-gray-600 uppercase hover:text-gray-900"
+                    >
+                      Order
+                      <ArrowUpDown className={`w-3 h-3 ${sortField === 'order' ? 'text-pickle-600' : 'text-gray-400'}`} />
+                    </button>
+                  </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Tracking</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Customer</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Destination</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Service</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Cost</th>
+                  <th className="px-4 py-3 text-left">
+                    <button 
+                      onClick={() => toggleSort('cost')}
+                      className="flex items-center gap-1 text-xs font-semibold text-gray-600 uppercase hover:text-gray-900"
+                    >
+                      Cost
+                      <ArrowUpDown className={`w-3 h-3 ${sortField === 'cost' ? 'text-pickle-600' : 'text-gray-400'}`} />
+                    </button>
+                  </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Zone</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Date</th>
+                  <th className="px-4 py-3 text-left">
+                    <button 
+                      onClick={() => toggleSort('status')}
+                      className="flex items-center gap-1 text-xs font-semibold text-gray-600 uppercase hover:text-gray-900"
+                    >
+                      Status
+                      <ArrowUpDown className={`w-3 h-3 ${sortField === 'status' ? 'text-pickle-600' : 'text-gray-400'}`} />
+                    </button>
+                  </th>
+                  <th className="px-4 py-3 text-left">
+                    <button 
+                      onClick={() => toggleSort('date')}
+                      className="flex items-center gap-1 text-xs font-semibold text-gray-600 uppercase hover:text-gray-900"
+                    >
+                      Date
+                      <ArrowUpDown className={`w-3 h-3 ${sortField === 'date' ? 'text-pickle-600' : 'text-gray-400'}`} />
+                    </button>
+                  </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {shipments.map((shipment) => {
+                {sortedShipments.map((shipment) => {
                   const status = statusConfig[shipment.status] || statusConfig.label_created
                   const StatusIcon = status.icon
                   const isVoided = shipment.status === 'voided'
@@ -340,8 +488,8 @@ export default function ShipmentsPage() {
               
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
                 <p className="text-sm text-yellow-800">
-                  <strong>Note:</strong> Voiding a label will refund the shipping cost to your UPS account. 
-                  Labels can only be voided before pickup/drop-off.
+                  <strong>Note:</strong> UPS may take a few minutes to process the void. 
+                  If it fails, wait 5-10 minutes and try again.
                 </p>
               </div>
             </div>
@@ -374,9 +522,25 @@ export default function ShipmentsPage() {
         </div>
       )}
       
-      {/* Help text */}
-      <div className="mt-6 text-center text-sm text-gray-500">
-        Labels can only be voided before they are scanned by UPS. Voided labels will be refunded.
+      {/* Summary Footer */}
+      <div className="mt-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+        <div className="flex items-center justify-between text-sm">
+          <div className="text-gray-500">
+            Showing {sortedShipments.length} of {shipments.length} shipments
+            {!showVoided && voidedCount > 0 && (
+              <span className="ml-2">
+                · <button onClick={() => setShowVoided(true)} className="text-pickle-600 hover:underline">
+                  Show {voidedCount} voided
+                </button>
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-gray-500">
+              Sort: <span className="font-medium text-gray-700 capitalize">{sortField}</span> ({sortOrder === 'desc' ? 'newest' : 'oldest'})
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

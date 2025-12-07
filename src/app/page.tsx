@@ -16,7 +16,9 @@ import {
   Mail,
   CheckCircle,
   AlertCircle,
-  Eye
+  Eye,
+  Loader2,
+  XCircle
 } from 'lucide-react'
 import { 
   getDashboard, 
@@ -24,7 +26,8 @@ import {
   getFulfillmentStatus,
   getNotificationStatus,
   getNotificationStats,
-  getNotificationLogs
+  getNotificationLogs,
+  getBatchNotificationStatus
 } from '@/lib/api'
 
 interface DashboardData {
@@ -75,6 +78,19 @@ interface NotificationLog {
   recipientName: string;
   status: string;
   createdAt: string;
+}
+
+interface BatchNotificationStatus {
+  hasBatch: boolean;
+  timestamp?: string;
+  total?: number;
+  sent?: number;
+  failed?: number;
+  inProgress?: boolean;
+  orders?: string[];
+  failedOrders?: Array<{ orderNumber: string; reason: string }>;
+  minutesAgo?: number;
+  summary?: string;
 }
 
 function StatCard({ 
@@ -138,6 +154,7 @@ export default function Dashboard() {
   const [notifStatus, setNotifStatus] = useState<{ enabled: boolean } | null>(null)
   const [notifStats, setNotifStats] = useState<NotificationStats | null>(null)
   const [recentNotifs, setRecentNotifs] = useState<NotificationLog[]>([])
+  const [batchStatus, setBatchStatus] = useState<BatchNotificationStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -146,13 +163,14 @@ export default function Dashboard() {
     setError(null)
     
     try {
-      const [dashboardData, walletData, fulfillmentData, notifStatusData, notifStatsData, notifLogsData] = await Promise.all([
+      const [dashboardData, walletData, fulfillmentData, notifStatusData, notifStatsData, notifLogsData, batchStatusData] = await Promise.all([
         getDashboard().catch(() => null),
         getWalletSummary().catch(() => null),
         getFulfillmentStatus().catch(() => null),
         getNotificationStatus().catch(() => ({ enabled: false })),
         getNotificationStats(7).catch(() => null),
         getNotificationLogs({ limit: 5 }).catch(() => ({ logs: [] })),
+        getBatchNotificationStatus().catch(() => ({ hasBatch: false })),
       ])
       
       setDashboard(dashboardData)
@@ -161,12 +179,37 @@ export default function Dashboard() {
       setNotifStatus(notifStatusData)
       setNotifStats(notifStatsData)
       setRecentNotifs(notifLogsData?.logs || [])
+      setBatchStatus(batchStatusData)
     } catch (err: any) {
       setError(err.message)
     } finally {
       setLoading(false)
     }
   }
+
+  // Poll batch status if in progress
+  useEffect(() => {
+    if (batchStatus?.inProgress) {
+      const interval = setInterval(async () => {
+        try {
+          const status = await getBatchNotificationStatus()
+          setBatchStatus(status)
+          
+          // Stop polling when done
+          if (!status.inProgress) {
+            clearInterval(interval)
+            // Reload notifications
+            const notifLogsData = await getNotificationLogs({ limit: 5 })
+            setRecentNotifs(notifLogsData?.logs || [])
+          }
+        } catch (e) {
+          // Ignore errors during polling
+        }
+      }, 2000)
+      
+      return () => clearInterval(interval)
+    }
+  }, [batchStatus?.inProgress])
 
   useEffect(() => {
     loadData()
@@ -218,6 +261,66 @@ export default function Dashboard() {
       {error && (
         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
           {error}
+        </div>
+      )}
+
+      {/* Batch Notification Status Banner */}
+      {batchStatus?.hasBatch && batchStatus.minutesAgo !== undefined && batchStatus.minutesAgo < 60 && (
+        <div className={`mb-6 p-4 rounded-lg border flex items-center justify-between ${
+          batchStatus.inProgress 
+            ? 'bg-blue-50 border-blue-200' 
+            : batchStatus.failed && batchStatus.failed > 0
+            ? 'bg-yellow-50 border-yellow-200'
+            : 'bg-green-50 border-green-200'
+        }`}>
+          <div className="flex items-center gap-3">
+            {batchStatus.inProgress ? (
+              <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+            ) : batchStatus.failed && batchStatus.failed > 0 ? (
+              <AlertCircle className="w-5 h-5 text-yellow-600" />
+            ) : (
+              <CheckCircle className="w-5 h-5 text-green-600" />
+            )}
+            <div>
+              <p className={`font-medium ${
+                batchStatus.inProgress 
+                  ? 'text-blue-800' 
+                  : batchStatus.failed && batchStatus.failed > 0
+                  ? 'text-yellow-800'
+                  : 'text-green-800'
+              }`}>
+                {batchStatus.inProgress 
+                  ? 'Sending batch notifications...' 
+                  : 'Last batch notifications'}
+              </p>
+              <p className={`text-sm ${
+                batchStatus.inProgress 
+                  ? 'text-blue-600' 
+                  : batchStatus.failed && batchStatus.failed > 0
+                  ? 'text-yellow-600'
+                  : 'text-green-600'
+              }`}>
+                {batchStatus.summary}
+                {!batchStatus.inProgress && batchStatus.failed && batchStatus.failed > 0 && (
+                  <span> · {batchStatus.failed} failed</span>
+                )}
+                {!batchStatus.inProgress && (
+                  <span> · {batchStatus.minutesAgo} min ago</span>
+                )}
+              </p>
+            </div>
+          </div>
+          
+          {/* Show recent orders from batch */}
+          {batchStatus.orders && batchStatus.orders.length > 0 && !batchStatus.inProgress && (
+            <div className="text-right">
+              <p className="text-xs text-gray-500 mb-1">Recent orders:</p>
+              <p className="text-sm font-mono text-gray-700">
+                {batchStatus.orders.slice(-5).join(', ')}
+                {batchStatus.orders.length > 5 && '...'}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -381,7 +484,7 @@ export default function Dashboard() {
                       {notif.status === 'delivered' || notif.status === 'opened' ? (
                         <CheckCircle className="w-4 h-4 text-green-600" />
                       ) : notif.status === 'failed' ? (
-                        <AlertCircle className="w-4 h-4 text-red-600" />
+                        <XCircle className="w-4 h-4 text-red-600" />
                       ) : (
                         <Mail className="w-4 h-4 text-blue-600" />
                       )}

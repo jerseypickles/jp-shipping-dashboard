@@ -190,6 +190,11 @@ export async function getShippingAnalytics(startDate?: string, endDate?: string)
   return fetchAPI(`/api/shipping/analytics?${query}`);
 }
 
+// Get batch notification status (for dashboard)
+export async function getBatchNotificationStatus() {
+  return fetchAPI('/api/shipping/batch-notification-status');
+}
+
 // ========================================
 // LABELS
 // ========================================

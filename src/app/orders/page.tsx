@@ -33,7 +33,10 @@ import {
   XCircle,
   Box,
   Mail,
-  Send
+  Send,
+  Lock,
+  FileEdit,
+  ExternalLink
 } from 'lucide-react'
 import { getUnfulfilledOrders, buyLabel, buyBatchLabels, getRates } from '@/lib/api'
 
@@ -205,6 +208,15 @@ export default function OrdersPage() {
   const [sendingInvoice, setSendingInvoice] = useState(false)
   const [invoiceSent, setInvoiceSent] = useState(false)
   
+  // Pending change requests - orders blocked from shipping
+  const [pendingChangeRequests, setPendingChangeRequests] = useState<Record<string, { 
+    id: string; 
+    status: string; 
+    amount: number;
+    amountFormatted: string;
+  }>>({})
+  const [loadingChangeRequests, setLoadingChangeRequests] = useState(false)
+  
   // Search & Filter state
   const [filters, setFilters] = useState<Filters>({
     search: '',
@@ -326,14 +338,50 @@ export default function OrdersPage() {
     })
   }
 
+  async function loadPendingChangeRequests() {
+    setLoadingChangeRequests(true)
+    try {
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || ''
+      const res = await fetch(`${API_BASE}/api/change-requests?status=actionable&limit=100`)
+      if (res.ok) {
+        const data = await res.json()
+        const pending: Record<string, { id: string; status: string; amount: number; amountFormatted: string }> = {}
+        
+        // Map by order number
+        for (const req of data.requests || []) {
+          // Only block if not yet applied
+          if (['pending', 'invoice_sent', 'paid'].includes(req.status)) {
+            pending[req.orderNumber] = {
+              id: req._id,
+              status: req.status,
+              amount: req.costs.additionalCost,
+              amountFormatted: `$${(req.costs.additionalCost / 100).toFixed(2)}`
+            }
+          }
+        }
+        
+        setPendingChangeRequests(pending)
+      }
+    } catch (err) {
+      console.error('Failed to load change requests:', err)
+    } finally {
+      setLoadingChangeRequests(false)
+    }
+  }
+  
   async function loadOrders(page: number = 1, refresh: boolean = false) {
     setLoading(true)
     setError(null)
     
     try {
-      const data = await getUnfulfilledOrders({ page, perPage, refresh })
-      setOrders(data.orders || [])
-      setPagination(data.pagination || null)
+      // Load orders and change requests in parallel
+      const [ordersData] = await Promise.all([
+        getUnfulfilledOrders({ page, perPage, refresh }),
+        loadPendingChangeRequests()
+      ])
+      
+      setOrders(ordersData.orders || [])
+      setPagination(ordersData.pagination || null)
       setCurrentPage(page)
       if (refresh) {
         setRates({})
@@ -351,6 +399,16 @@ export default function OrdersPage() {
   }, [])
 
   function toggleSelect(orderId: string) {
+    // Don't allow selecting orders with pending change requests
+    const order = orders.find(o => o.shopifyOrderId === orderId)
+    if (order && pendingChangeRequests[order.orderNumber]) {
+      const cr = pendingChangeRequests[order.orderNumber]
+      if (cr.status !== 'paid') {
+        setError(`Order ${order.orderNumber} has a pending change request (${cr.amountFormatted}). Cannot ship until paid.`)
+        return
+      }
+    }
+    
     const newSelected = new Set(selected)
     if (newSelected.has(orderId)) {
       newSelected.delete(orderId)
@@ -361,20 +419,32 @@ export default function OrdersPage() {
   }
 
   function toggleSelectAll() {
-    // Select/deselect only filtered orders
-    const filteredIds = new Set(filteredOrders.map(o => o.shopifyOrderId))
-    const allFilteredSelected = filteredOrders.every(o => selected.has(o.shopifyOrderId))
+    // Select/deselect only filtered orders that don't have blocking change requests
+    const selectableOrders = filteredOrders.filter(o => {
+      const cr = pendingChangeRequests[o.orderNumber]
+      // Allow if no CR, or if CR is paid (ready to ship)
+      return !cr || cr.status === 'paid'
+    })
     
-    if (allFilteredSelected) {
-      // Deselect all filtered
+    const selectableIds = new Set(selectableOrders.map(o => o.shopifyOrderId))
+    const allSelectableSelected = selectableOrders.every(o => selected.has(o.shopifyOrderId))
+    
+    if (allSelectableSelected) {
+      // Deselect all selectable
       const newSelected = new Set(selected)
-      filteredIds.forEach(id => newSelected.delete(id))
+      selectableIds.forEach(id => newSelected.delete(id))
       setSelected(newSelected)
     } else {
-      // Select all filtered
+      // Select all selectable
       const newSelected = new Set(selected)
-      filteredIds.forEach(id => newSelected.add(id))
+      selectableIds.forEach(id => newSelected.add(id))
       setSelected(newSelected)
+    }
+    
+    // Notify if some were skipped
+    const skippedCount = filteredOrders.length - selectableOrders.length
+    if (skippedCount > 0 && !allSelectableSelected) {
+      setSuccess(`Selected ${selectableOrders.length} orders. ${skippedCount} skipped due to pending change requests.`)
     }
   }
   
@@ -584,11 +654,15 @@ export default function OrdersPage() {
     setError(null)
     
     try {
-      const response = await fetch('/api/shipping/send-invoice', {
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || ''
+      
+      // Step 1: Create the change request
+      const createRes = await fetch(`${API_BASE}/api/change-requests`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           orderNumber: editingAddress.orderNumber,
+          shopifyOrderId: editingAddress.orderId,
           customer: editingAddress.customer,
           originalAddress: editingAddress.originalShipTo,
           newAddress: editingAddress.shipTo,
@@ -602,14 +676,39 @@ export default function OrdersPage() {
         })
       })
       
-      const result = await response.json()
+      const createData = await createRes.json()
       
-      if (result.success) {
-        setInvoiceSent(true)
-        setSuccess(`📧 Invoice sent to ${editingAddress.customer.email}! Additional charge: ${result.additionalCost}`)
-      } else {
-        setError(result.error || 'Failed to send invoice')
+      if (!createRes.ok) {
+        throw new Error(createData.error || 'Failed to create change request')
       }
+      
+      const changeRequestId = createData.request._id
+      
+      // Step 2: Send the invoice (creates Stripe Payment Link + email)
+      const invoiceRes = await fetch(`${API_BASE}/api/change-requests/${changeRequestId}/send-invoice`, {
+        method: 'POST'
+      })
+      
+      const invoiceData = await invoiceRes.json()
+      
+      if (!invoiceRes.ok) {
+        throw new Error(invoiceData.error || 'Failed to send invoice')
+      }
+      
+      setInvoiceSent(true)
+      setSuccess(`📧 Invoice sent to ${editingAddress.customer.email}! Additional charge: $${(createData.request.costs.additionalCost / 100).toFixed(2)}`)
+      
+      // Update pending change requests to show the blocked status
+      setPendingChangeRequests(prev => ({
+        ...prev,
+        [editingAddress.orderNumber]: {
+          id: changeRequestId,
+          status: 'invoice_sent',
+          amount: createData.request.costs.additionalCost,
+          amountFormatted: `$${(createData.request.costs.additionalCost / 100).toFixed(2)}`
+        }
+      }))
+      
     } catch (err: any) {
       setError(err.message || 'Failed to send invoice')
     } finally {
@@ -860,6 +959,17 @@ export default function OrdersPage() {
   // Check if all filtered orders are selected
   const allFilteredSelected = filteredOrders.length > 0 && filteredOrders.every(o => selected.has(o.shopifyOrderId))
   const someFilteredSelected = filteredOrders.some(o => selected.has(o.shopifyOrderId))
+  
+  // Count blocked orders (with pending change requests)
+  const blockedCount = Object.keys(pendingChangeRequests).filter(orderNum => {
+    const cr = pendingChangeRequests[orderNum]
+    return cr.status !== 'paid' && orders.some(o => o.orderNumber === orderNum)
+  }).length
+  
+  const paidPendingCount = Object.keys(pendingChangeRequests).filter(orderNum => {
+    const cr = pendingChangeRequests[orderNum]
+    return cr.status === 'paid' && orders.some(o => o.orderNumber === orderNum)
+  }).length
 
   return (
     <div className="p-8">
@@ -876,16 +986,38 @@ export default function OrdersPage() {
             {bybCount > 0 && (
               <span className="text-purple-600 font-medium"> • {bybCount} BYB</span>
             )}
+            {blockedCount > 0 && (
+              <span className="text-amber-600 font-medium"> • {blockedCount} blocked</span>
+            )}
+            {paidPendingCount > 0 && (
+              <span className="text-green-600 font-medium"> • {paidPendingCount} ready</span>
+            )}
           </p>
         </div>
-        <button
-          onClick={() => loadOrders(1, true)}
-          disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Sync from Shopify
-        </button>
+        <div className="flex items-center gap-3">
+          {(blockedCount > 0 || paidPendingCount > 0) && (
+            <a
+              href="/change-requests"
+              className="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg hover:bg-amber-100 transition-colors"
+            >
+              <FileEdit className="w-4 h-4" />
+              Change Requests
+              {paidPendingCount > 0 && (
+                <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-xs font-bold rounded">
+                  {paidPendingCount}
+                </span>
+              )}
+            </a>
+          )}
+          <button
+            onClick={() => loadOrders(1, true)}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Sync from Shopify
+          </button>
+        </div>
       </div>
       
       {/* Search & Filter Bar */}
@@ -1324,17 +1456,30 @@ export default function OrdersPage() {
                   const isExpanded = expandedOrders.has(order.shopifyOrderId)
                   const hasBYB = isBYBOrder(order.items)
                   
+                  // Check for pending change request
+                  const changeRequest = pendingChangeRequests[order.orderNumber]
+                  const isBlocked = changeRequest && changeRequest.status !== 'paid'
+                  const isPaidPending = changeRequest && changeRequest.status === 'paid'
+                  
                   return (
                     <Fragment key={order.shopifyOrderId}>
-                      <tr className={`hover:bg-gray-50 transition-colors ${selected.has(order.shopifyOrderId) ? 'bg-pickle-50 hover:bg-pickle-100' : ''}`}>
+                      <tr className={`hover:bg-gray-50 transition-colors ${
+                        selected.has(order.shopifyOrderId) ? 'bg-pickle-50 hover:bg-pickle-100' : ''
+                      } ${isBlocked ? 'bg-amber-50/50' : ''}`}>
                         <td className="px-4 py-4">
-                          <button onClick={() => toggleSelect(order.shopifyOrderId)} className="p-1 hover:bg-gray-200 rounded">
-                            {selected.has(order.shopifyOrderId) ? (
-                              <CheckSquare className="w-5 h-5 text-pickle-600" />
-                            ) : (
-                              <Square className="w-5 h-5 text-gray-400" />
-                            )}
-                          </button>
+                          {isBlocked ? (
+                            <div className="p-1" title={`Blocked: Change request pending (${changeRequest.amountFormatted})`}>
+                              <Lock className="w-5 h-5 text-amber-500" />
+                            </div>
+                          ) : (
+                            <button onClick={() => toggleSelect(order.shopifyOrderId)} className="p-1 hover:bg-gray-200 rounded">
+                              {selected.has(order.shopifyOrderId) ? (
+                                <CheckSquare className="w-5 h-5 text-pickle-600" />
+                              ) : (
+                                <Square className="w-5 h-5 text-gray-400" />
+                              )}
+                            </button>
+                          )}
                         </td>
                         <td className="px-2 py-4">
                           <button 
@@ -1346,7 +1491,7 @@ export default function OrdersPage() {
                           </button>
                         </td>
                         <td className="px-4 py-4">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <div className="font-semibold text-gray-900">{order.orderNumber}</div>
                             {hasBYB && (
                               <span 
@@ -1356,6 +1501,26 @@ export default function OrdersPage() {
                                 <Box className="w-2.5 h-2.5" />
                                 BYB
                               </span>
+                            )}
+                            {isBlocked && (
+                              <a 
+                                href="/change-requests"
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 hover:bg-amber-200"
+                                title={`Pending change request: ${changeRequest.amountFormatted}`}
+                              >
+                                <FileEdit className="w-2.5 h-2.5" />
+                                {changeRequest.status === 'pending' ? 'PENDING' : 'INVOICED'}
+                              </a>
+                            )}
+                            {isPaidPending && (
+                              <a 
+                                href="/change-requests"
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-700 hover:bg-green-200"
+                                title={`Paid! Click to apply changes (${changeRequest.amountFormatted})`}
+                              >
+                                <CheckCircle className="w-2.5 h-2.5" />
+                                PAID
+                              </a>
                             )}
                           </div>
                           <div className="text-xs text-gray-500 mt-1">

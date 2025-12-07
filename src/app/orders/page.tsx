@@ -132,6 +132,12 @@ interface EditingAddress {
   newRate: number | null;
   newRateLoading: boolean;
   newRateError: string | null;
+  originalPackage: {
+    weight: number;
+    length: number;
+    width: number;
+    height: number;
+  };
   package: {
     weight: number;
     length: number;
@@ -378,6 +384,13 @@ export default function OrdersPage() {
     const customerPaid = parseFloat(order.shippingPaid?.amount || '0') * 100
     const existingRate = rates[order.shopifyOrderId]?.rate || null
     
+    const packageData = {
+      weight: order.package?.weight || 1,
+      length: order.package?.length || 12,
+      width: order.package?.width || 12,
+      height: order.package?.height || 12
+    }
+    
     setEditingAddress({
       orderId: order.shopifyOrderId,
       orderNumber: order.orderNumber,
@@ -406,7 +419,8 @@ export default function OrdersPage() {
       newRate: null,
       newRateLoading: false,
       newRateError: null,
-      package: order.package
+      originalPackage: { ...packageData },
+      package: { ...packageData }
     })
   }
   
@@ -421,6 +435,22 @@ export default function OrdersPage() {
       orig.state !== curr.state ||
       orig.zip !== curr.zip
     )
+  }
+  
+  function hasPackageChanged(): boolean {
+    if (!editingAddress) return false
+    const orig = editingAddress.originalPackage
+    const curr = editingAddress.package
+    return (
+      orig.weight !== curr.weight ||
+      orig.length !== curr.length ||
+      orig.width !== curr.width ||
+      orig.height !== curr.height
+    )
+  }
+  
+  function hasAnyChanges(): boolean {
+    return hasAddressChanged() || hasPackageChanged()
   }
   
   async function calculateNewRate() {
@@ -491,24 +521,37 @@ export default function OrdersPage() {
     const originalRate = editingAddress.originalRate || customerPaid
     const additionalCost = newRate - originalRate
     
-    const text = `
-Order: ${editingAddress.orderNumber}
-Address Change Request
-
-Original Address:
-${editingAddress.originalShipTo.street1}${editingAddress.originalShipTo.street2 ? ', ' + editingAddress.originalShipTo.street2 : ''}
-${editingAddress.originalShipTo.city}, ${editingAddress.originalShipTo.state} ${editingAddress.originalShipTo.zip}
-
-New Address:
-${editingAddress.shipTo.street1}${editingAddress.shipTo.street2 ? ', ' + editingAddress.shipTo.street2 : ''}
-${editingAddress.shipTo.city}, ${editingAddress.shipTo.state} ${editingAddress.shipTo.zip}
-
-Original Shipping Paid: $${(customerPaid / 100).toFixed(2)}
-New Shipping Cost: $${(newRate / 100).toFixed(2)}
-Additional Charge: $${(additionalCost / 100).toFixed(2)}
-
-Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the address change.
-    `.trim()
+    const addressChanged = hasAddressChanged()
+    const packageChanged = hasPackageChanged()
+    
+    let text = `Order: ${editingAddress.orderNumber}\n`
+    
+    if (addressChanged && packageChanged) {
+      text += `Address & Package Change Request\n\n`
+    } else if (addressChanged) {
+      text += `Address Change Request\n\n`
+    } else {
+      text += `Package Change Request\n\n`
+    }
+    
+    if (addressChanged) {
+      text += `Original Address:\n`
+      text += `${editingAddress.originalShipTo.street1}${editingAddress.originalShipTo.street2 ? ', ' + editingAddress.originalShipTo.street2 : ''}\n`
+      text += `${editingAddress.originalShipTo.city}, ${editingAddress.originalShipTo.state} ${editingAddress.originalShipTo.zip}\n\n`
+      text += `New Address:\n`
+      text += `${editingAddress.shipTo.street1}${editingAddress.shipTo.street2 ? ', ' + editingAddress.shipTo.street2 : ''}\n`
+      text += `${editingAddress.shipTo.city}, ${editingAddress.shipTo.state} ${editingAddress.shipTo.zip}\n\n`
+    }
+    
+    if (packageChanged) {
+      text += `Original Package: ${editingAddress.originalPackage.weight} lbs, ${editingAddress.originalPackage.length}×${editingAddress.originalPackage.width}×${editingAddress.originalPackage.height}"\n`
+      text += `New Package: ${editingAddress.package.weight} lbs, ${editingAddress.package.length}×${editingAddress.package.width}×${editingAddress.package.height}"\n\n`
+    }
+    
+    text += `Original Shipping Paid: $${(customerPaid / 100).toFixed(2)}\n`
+    text += `New Shipping Cost: $${(newRate / 100).toFixed(2)}\n`
+    text += `Additional Charge: $${(additionalCost / 100).toFixed(2)}\n\n`
+    text += `Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the changes.`
     
     navigator.clipboard.writeText(text)
     setCopiedInvoice(true)
@@ -527,6 +570,9 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
           shipTo: {
             ...order.shipTo,
             ...editingAddress.shipTo
+          },
+          package: {
+            ...editingAddress.package
           }
         }
       }
@@ -554,15 +600,20 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
     setSavingAddress(false)
     
     const addressChanged = hasAddressChanged()
-    if (addressChanged && editingAddress.newRate !== null) {
+    const packageChanged = hasPackageChanged()
+    
+    if ((addressChanged || packageChanged) && editingAddress.newRate !== null) {
       const profit = editingAddress.customerPaid - editingAddress.newRate
+      const changeType = addressChanged && packageChanged ? 'Address & package' : addressChanged ? 'Address' : 'Package'
       if (profit < 0) {
-        setSuccess(`⚠️ Address updated for ${editingAddress.orderNumber}. Loss: $${Math.abs(profit / 100).toFixed(2)}`)
+        setSuccess(`⚠️ ${changeType} updated for ${editingAddress.orderNumber}. Loss: $${Math.abs(profit / 100).toFixed(2)}`)
       } else {
-        setSuccess(`✓ Address updated for ${editingAddress.orderNumber}. New rate: $${(editingAddress.newRate / 100).toFixed(2)}`)
+        setSuccess(`✓ ${changeType} updated for ${editingAddress.orderNumber}. New rate: $${(editingAddress.newRate / 100).toFixed(2)}`)
       }
+    } else if (addressChanged || packageChanged) {
+      setSuccess(`✓ Order ${editingAddress.orderNumber} updated.`)
     } else {
-      setSuccess(`✓ Address updated.`)
+      setSuccess(`✓ No changes made.`)
     }
     
     setEditingAddress(null)
@@ -743,6 +794,8 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
   const hasAllRates = selectedOrders.length > 0 && selectedOrders.every(o => rates[o.shopifyOrderId]?.rate !== undefined)
 
   const addressChanged = editingAddress ? hasAddressChanged() : false
+  const packageChanged = editingAddress ? hasPackageChanged() : false
+  const anyChanges = editingAddress ? hasAnyChanges() : false
   const canCalculateRate = editingAddress && editingAddress.shipTo.zip && editingAddress.shipTo.zip.length >= 5
   
   // Check if all filtered orders are selected
@@ -1485,8 +1538,8 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
             {/* Modal Header */}
             <div className="px-6 py-4 bg-pickle-600 text-white flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <MapPin className="w-5 h-5" />
-                <span className="font-semibold">Edit Shipping Address - {editingAddress.orderNumber}</span>
+                <Edit3 className="w-5 h-5" />
+                <span className="font-semibold">Edit Order - {editingAddress.orderNumber}</span>
               </div>
               <button onClick={() => setEditingAddress(null)} className="p-1 hover:bg-white/20 rounded-lg transition-colors">
                 <X className="w-5 h-5" />
@@ -1495,6 +1548,12 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
             
             {/* Modal Body */}
             <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+              {/* Address Section Header */}
+              <div className="flex items-center gap-2 mb-1">
+                <MapPin className="w-5 h-5 text-gray-600" />
+                <span className="font-semibold text-gray-800">Shipping Address</span>
+              </div>
+              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Recipient Name *</label>
                 <input type="text" value={editingAddress.shipTo.name}
@@ -1551,19 +1610,107 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                   placeholder="(555) 123-4567" />
               </div>
               
+              {/* Package Section */}
+              <div className="pt-4 mt-4 border-t border-gray-200">
+                <div className="flex items-center gap-2 mb-3">
+                  <Package className="w-5 h-5 text-gray-600" />
+                  <span className="font-semibold text-gray-800">Package Details</span>
+                </div>
+                
+                <div className="grid grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Weight (lbs) *</label>
+                    <input 
+                      type="number" 
+                      step="0.1"
+                      min="0.1"
+                      value={editingAddress.package.weight}
+                      onChange={(e) => setEditingAddress({ 
+                        ...editingAddress, 
+                        package: { ...editingAddress.package, weight: parseFloat(e.target.value) || 0 },
+                        newRate: null,
+                        newRateError: null
+                      })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Length (in)</label>
+                    <input 
+                      type="number" 
+                      step="1"
+                      min="1"
+                      value={editingAddress.package.length}
+                      onChange={(e) => setEditingAddress({ 
+                        ...editingAddress, 
+                        package: { ...editingAddress.package, length: parseInt(e.target.value) || 0 },
+                        newRate: null,
+                        newRateError: null
+                      })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Width (in)</label>
+                    <input 
+                      type="number" 
+                      step="1"
+                      min="1"
+                      value={editingAddress.package.width}
+                      onChange={(e) => setEditingAddress({ 
+                        ...editingAddress, 
+                        package: { ...editingAddress.package, width: parseInt(e.target.value) || 0 },
+                        newRate: null,
+                        newRateError: null
+                      })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Height (in)</label>
+                    <input 
+                      type="number" 
+                      step="1"
+                      min="1"
+                      value={editingAddress.package.height}
+                      onChange={(e) => setEditingAddress({ 
+                        ...editingAddress, 
+                        package: { ...editingAddress.package, height: parseInt(e.target.value) || 0 },
+                        newRate: null,
+                        newRateError: null
+                      })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                    />
+                  </div>
+                </div>
+                
+                {/* Show original values if changed */}
+                {packageChanged && (
+                  <div className="mt-2 text-xs text-gray-500">
+                    Original: {editingAddress.originalPackage.weight} lbs, {editingAddress.originalPackage.length}×{editingAddress.originalPackage.width}×{editingAddress.originalPackage.height} in
+                  </div>
+                )}
+              </div>
+              
               {/* Calculate Rate Button */}
-              {addressChanged && canCalculateRate && (
+              {anyChanges && canCalculateRate && (
                 <div className="pt-2">
                   <button onClick={calculateNewRate} disabled={editingAddress.newRateLoading}
                     className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 font-medium">
                     {editingAddress.newRateLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calculator className="w-4 h-4" />}
                     {editingAddress.newRateLoading ? 'Calculating...' : 'Calculate New Rate'}
                   </button>
+                  {(addressChanged || packageChanged) && (
+                    <p className="mt-2 text-xs text-gray-500">
+                      {addressChanged && packageChanged ? '📍 Address & 📦 Package changed' : 
+                       addressChanged ? '📍 Address changed' : '📦 Package changed'}
+                    </p>
+                  )}
                 </div>
               )}
               
               {/* Cost Comparison Box */}
-              {addressChanged && (editingAddress.newRate !== null || editingAddress.newRateError) && (
+              {anyChanges && (editingAddress.newRate !== null || editingAddress.newRateError) && (
                 <div className={`p-4 rounded-lg border-2 ${
                   editingAddress.newRateError ? 'bg-red-50 border-red-200' 
                     : (editingAddress.customerPaid - editingAddress.newRate!) >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
@@ -1577,16 +1724,32 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                     <div className="text-red-600"><AlertCircle className="w-4 h-4 inline mr-1" />{editingAddress.newRateError}</div>
                   ) : (
                     <div className="space-y-2 text-sm">
-                      {/* Address Comparison */}
+                      {/* Changes Summary */}
                       <div className="grid grid-cols-2 gap-4 pb-3 border-b border-gray-200">
-                        <div>
-                          <div className="text-gray-500 text-xs uppercase mb-1">Original Address</div>
-                          <div className="font-medium">{editingAddress.originalShipTo.city}, {editingAddress.originalShipTo.state} {editingAddress.originalShipTo.zip}</div>
-                        </div>
-                        <div>
-                          <div className="text-gray-500 text-xs uppercase mb-1">New Address</div>
-                          <div className="font-medium">{editingAddress.shipTo.city}, {editingAddress.shipTo.state} {editingAddress.shipTo.zip}</div>
-                        </div>
+                        {addressChanged && (
+                          <>
+                            <div>
+                              <div className="text-gray-500 text-xs uppercase mb-1">📍 Original Address</div>
+                              <div className="font-medium">{editingAddress.originalShipTo.city}, {editingAddress.originalShipTo.state} {editingAddress.originalShipTo.zip}</div>
+                            </div>
+                            <div>
+                              <div className="text-gray-500 text-xs uppercase mb-1">📍 New Address</div>
+                              <div className="font-medium">{editingAddress.shipTo.city}, {editingAddress.shipTo.state} {editingAddress.shipTo.zip}</div>
+                            </div>
+                          </>
+                        )}
+                        {packageChanged && (
+                          <>
+                            <div>
+                              <div className="text-gray-500 text-xs uppercase mb-1">📦 Original Package</div>
+                              <div className="font-medium">{editingAddress.originalPackage.weight} lbs, {editingAddress.originalPackage.length}×{editingAddress.originalPackage.width}×{editingAddress.originalPackage.height}&quot;</div>
+                            </div>
+                            <div>
+                              <div className="text-gray-500 text-xs uppercase mb-1">📦 New Package</div>
+                              <div className="font-medium">{editingAddress.package.weight} lbs, {editingAddress.package.length}×{editingAddress.package.width}×{editingAddress.package.height}&quot;</div>
+                            </div>
+                          </>
+                        )}
                       </div>
                       
                       {/* Cost Breakdown */}
@@ -1644,16 +1807,16 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
               )}
               
               {/* Warning for no rate calculated yet */}
-              {addressChanged && editingAddress.newRate === null && !editingAddress.newRateLoading && !editingAddress.newRateError && (
+              {anyChanges && editingAddress.newRate === null && !editingAddress.newRateLoading && !editingAddress.newRateError && (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <p className="text-sm text-amber-700">
-                    ⚠️ <strong>Address changed!</strong> Click &quot;Calculate New Rate&quot; to see shipping cost before saving.
+                    ⚠️ <strong>{addressChanged && packageChanged ? 'Address & package changed!' : addressChanged ? 'Address changed!' : 'Package changed!'}</strong> Click &quot;Calculate New Rate&quot; to see shipping cost before saving.
                   </p>
                 </div>
               )}
               
-              {/* Standard warning */}
-              {!addressChanged && (
+              {/* Standard info when no changes */}
+              {!anyChanges && (
                 <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
                   <p className="text-sm text-gray-600">
                     💡 Changes are temporary and only affect this shipping session. The original Shopify order will not be updated.
@@ -1667,7 +1830,7 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
               <div className="flex items-center justify-between">
                 {/* Left side - Copy Invoice button */}
                 <div>
-                  {addressChanged && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 && (
+                  {anyChanges && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 && (
                     <button onClick={copyInvoiceText}
                       className="flex items-center gap-2 px-3 py-2 text-amber-700 bg-amber-100 border border-amber-300 rounded-lg hover:bg-amber-200 transition-colors text-sm font-medium">
                       <Copy className="w-4 h-4" />
@@ -1683,7 +1846,7 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                     Cancel
                   </button>
                   
-                  {addressChanged && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 ? (
+                  {anyChanges && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 ? (
                     <button onClick={saveAddress} disabled={savingAddress}
                       className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium">
                       {savingAddress ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />}
@@ -1694,7 +1857,7 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                       disabled={savingAddress || !editingAddress.shipTo.name || !editingAddress.shipTo.street1 || !editingAddress.shipTo.city || !editingAddress.shipTo.state || !editingAddress.shipTo.zip}
                       className="flex items-center gap-2 px-4 py-2 bg-pickle-600 text-white rounded-lg hover:bg-pickle-700 transition-colors font-medium disabled:opacity-50">
                       {savingAddress ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                      {addressChanged && editingAddress.newRate === null ? 'Save (Rate Unknown)' : 'Save Address'}
+                      {anyChanges && editingAddress.newRate === null ? 'Save (Rate Unknown)' : 'Save Changes'}
                     </button>
                   )}
                 </div>

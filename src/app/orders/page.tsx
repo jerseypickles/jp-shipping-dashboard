@@ -696,7 +696,7 @@ export default function OrdersPage() {
       }
       
       setInvoiceSent(true)
-      setSuccess(`📧 Invoice sent to ${editingAddress.customer.email}! Additional charge: $${(createData.request.costs.additionalCost / 100).toFixed(2)}`)
+      setSuccess(`📧 Shopify invoice sent to ${editingAddress.customer.email}! Additional charge: $${(createData.request.costs.additionalCost / 100).toFixed(2)}`)
       
       // Update pending change requests to show the blocked status
       setPendingChangeRequests(prev => ({

@@ -30,7 +30,8 @@ import {
   Search,
   Filter,
   Calendar,
-  XCircle
+  XCircle,
+  Box
 } from 'lucide-react'
 import { getUnfulfilledOrders, buyLabel, buyBatchLabels, getRates } from '@/lib/api'
 
@@ -147,6 +148,7 @@ interface Filters {
   hasRate: 'all' | 'with' | 'without' | 'error';
   weightMin: string;
   weightMax: string;
+  hasBYB: 'all' | 'yes' | 'no';
 }
 
 const US_STATES = [
@@ -156,6 +158,19 @@ const US_STATES = [
   'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
   'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'
 ]
+
+// Helper function to detect BYB orders
+function isBYBOrder(items: OrderItem[]): boolean {
+  if (!items || items.length === 0) return false
+  return items.some(item => {
+    const name = (item.name || '').toLowerCase()
+    return name.includes('build your') || 
+           name.includes('build-your') || 
+           name.includes('byb') ||
+           name.includes('custom box') ||
+           name.includes('build box')
+  })
+}
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([])
@@ -184,9 +199,15 @@ export default function OrdersPage() {
     state: '',
     hasRate: 'all',
     weightMin: '',
-    weightMax: ''
+    weightMax: '',
+    hasBYB: 'all'
   })
   const [showFilters, setShowFilters] = useState(false)
+
+  // Count BYB orders
+  const bybCount = useMemo(() => {
+    return orders.filter(o => isBYBOrder(o.items)).length
+  }, [orders])
 
   // Filter orders locally
   const filteredOrders = useMemo(() => {
@@ -253,6 +274,13 @@ export default function OrdersPage() {
         if (!isNaN(maxWeight) && (order.package?.weight || 0) > maxWeight) return false
       }
       
+      // BYB filter
+      if (filters.hasBYB !== 'all') {
+        const orderHasBYB = isBYBOrder(order.items)
+        if (filters.hasBYB === 'yes' && !orderHasBYB) return false
+        if (filters.hasBYB === 'no' && orderHasBYB) return false
+      }
+      
       return true
     })
   }, [orders, filters, rates])
@@ -266,6 +294,7 @@ export default function OrdersPage() {
     if (filters.hasRate !== 'all') count++
     if (filters.weightMin) count++
     if (filters.weightMax) count++
+    if (filters.hasBYB !== 'all') count++
     return count
   }, [filters])
   
@@ -278,7 +307,8 @@ export default function OrdersPage() {
       state: '',
       hasRate: 'all',
       weightMin: '',
-      weightMax: ''
+      weightMax: '',
+      hasBYB: 'all'
     })
   }
 
@@ -731,6 +761,9 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
             {filteredOrders.length !== orders.length && (
               <span className="text-pickle-600 font-medium"> • {filteredOrders.length} shown</span>
             )}
+            {bybCount > 0 && (
+              <span className="text-purple-600 font-medium"> • {bybCount} BYB</span>
+            )}
           </p>
         </div>
         <button
@@ -767,6 +800,29 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
             )}
           </div>
           
+          {/* BYB Quick Filter */}
+          {bybCount > 0 && (
+            <button
+              onClick={() => setFilters(prev => ({ 
+                ...prev, 
+                hasBYB: prev.hasBYB === 'yes' ? 'all' : 'yes' 
+              }))}
+              className={`flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                filters.hasBYB === 'yes'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-white border border-purple-200 text-purple-700 hover:bg-purple-50'
+              }`}
+            >
+              <Box className="w-4 h-4" />
+              BYB
+              <span className={`px-1.5 py-0.5 rounded text-xs ${
+                filters.hasBYB === 'yes' ? 'bg-purple-500' : 'bg-purple-100'
+              }`}>
+                {bybCount}
+              </span>
+            </button>
+          )}
+          
           {/* Filter Toggle Button */}
           <button
             onClick={() => setShowFilters(!showFilters)}
@@ -800,7 +856,7 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
         {/* Expanded Filters */}
         {showFilters && (
           <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
               {/* Date From */}
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Date From</label>
@@ -886,6 +942,20 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                   className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-pickle-500"
                 />
               </div>
+              
+              {/* BYB Filter */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Build Your Box</label>
+                <select
+                  value={filters.hasBYB}
+                  onChange={(e) => setFilters(prev => ({ ...prev, hasBYB: e.target.value as Filters['hasBYB'] }))}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-pickle-500 bg-white"
+                >
+                  <option value="all">All Orders</option>
+                  <option value="yes">BYB Only</option>
+                  <option value="no">Non-BYB</option>
+                </select>
+              </div>
             </div>
             
             {/* Quick Filters */}
@@ -938,6 +1008,15 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
               >
                 Heavy (5+ lbs)
               </button>
+              {bybCount > 0 && (
+                <button
+                  onClick={() => setFilters(prev => ({ ...prev, hasBYB: 'yes' }))}
+                  className="px-3 py-1 text-xs bg-purple-100 border border-purple-200 text-purple-700 rounded-full hover:bg-purple-200 flex items-center gap-1"
+                >
+                  <Box className="w-3 h-3" />
+                  BYB Only
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -1131,6 +1210,7 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                   const orderRate = rates[order.shopifyOrderId]
                   const hasShipTo = order.shipTo && order.shipTo.zip
                   const isExpanded = expandedOrders.has(order.shopifyOrderId)
+                  const hasBYB = isBYBOrder(order.items)
                   
                   return (
                     <Fragment key={order.shopifyOrderId}>
@@ -1154,7 +1234,18 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                           </button>
                         </td>
                         <td className="px-4 py-4">
-                          <div className="font-semibold text-gray-900">{order.orderNumber}</div>
+                          <div className="flex items-center gap-2">
+                            <div className="font-semibold text-gray-900">{order.orderNumber}</div>
+                            {hasBYB && (
+                              <span 
+                                className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700"
+                                title="Build Your Box"
+                              >
+                                <Box className="w-2.5 h-2.5" />
+                                BYB
+                              </span>
+                            )}
+                          </div>
                           <div className="text-xs text-gray-500 mt-1">
                             {new Date(order.orderDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           </div>
@@ -1247,8 +1338,14 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                           <td colSpan={10} className="px-4 py-0">
                             <div className="py-4 pl-14 pr-4">
                               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                                <div className="px-4 py-2 bg-gray-100 border-b border-gray-200">
+                                <div className="px-4 py-2 bg-gray-100 border-b border-gray-200 flex items-center gap-2">
                                   <span className="text-sm font-medium text-gray-700">📦 Products in Order {order.orderNumber}</span>
+                                  {hasBYB && (
+                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700">
+                                      <Box className="w-2.5 h-2.5" />
+                                      BYB
+                                    </span>
+                                  )}
                                 </div>
                                 <table className="w-full">
                                   <thead className="bg-gray-50">
@@ -1262,19 +1359,33 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
                                   </thead>
                                   <tbody className="divide-y divide-gray-100">
                                     {order.items && order.items.length > 0 ? (
-                                      order.items.map((item, idx) => (
-                                        <tr key={idx} className="hover:bg-gray-50">
-                                          <td className="px-4 py-3"><span className="font-medium text-gray-900">{item.name || 'Unknown Product'}</span></td>
-                                          <td className="px-4 py-3"><span className="text-sm text-gray-500 font-mono">{item.sku || '-'}</span></td>
-                                          <td className="px-4 py-3"><span className="text-sm text-gray-500">{item.variant_title || '-'}</span></td>
-                                          <td className="px-4 py-3 text-center">
-                                            <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-pickle-100 text-pickle-700 font-semibold text-sm">{item.quantity}</span>
-                                          </td>
-                                          <td className="px-4 py-3 text-right">
-                                            <span className="font-medium text-gray-900">{item.price ? `$${parseFloat(item.price).toFixed(2)}` : '-'}</span>
-                                          </td>
-                                        </tr>
-                                      ))
+                                      order.items.map((item, idx) => {
+                                        const itemIsBYB = (item.name || '').toLowerCase().includes('build your') || 
+                                                         (item.name || '').toLowerCase().includes('build-your') ||
+                                                         (item.name || '').toLowerCase().includes('byb')
+                                        return (
+                                          <tr key={idx} className="hover:bg-gray-50">
+                                            <td className="px-4 py-3">
+                                              <div className="flex items-center gap-2">
+                                                <span className="font-medium text-gray-900">{item.name || 'Unknown Product'}</span>
+                                                {itemIsBYB && (
+                                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700">
+                                                    <Box className="w-2.5 h-2.5" />
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </td>
+                                            <td className="px-4 py-3"><span className="text-sm text-gray-500 font-mono">{item.sku || '-'}</span></td>
+                                            <td className="px-4 py-3"><span className="text-sm text-gray-500">{item.variant_title || '-'}</span></td>
+                                            <td className="px-4 py-3 text-center">
+                                              <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-pickle-100 text-pickle-700 font-semibold text-sm">{item.quantity}</span>
+                                            </td>
+                                            <td className="px-4 py-3 text-right">
+                                              <span className="font-medium text-gray-900">{item.price ? `$${parseFloat(item.price).toFixed(2)}` : '-'}</span>
+                                            </td>
+                                          </tr>
+                                        )
+                                      })
                                     ) : (
                                       <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">No product details available</td></tr>
                                     )}
@@ -1362,7 +1473,7 @@ Please send payment of $${(additionalCost / 100).toFixed(2)} to proceed with the
         </ol>
         <div className="mt-3 pt-3 border-t border-blue-200">
           <p className="text-sm text-blue-700">
-            <strong>💡 Tips:</strong> Use search to find orders by #, customer, email, city or SKU. Click ▼ to see products. Click ✏️ to edit address.
+            <strong>💡 Tips:</strong> Use search to find orders by #, customer, email, city or SKU. Click ▼ to see products. Click ✏️ to edit address. <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700"><Box className="w-2.5 h-2.5" />BYB</span> = Build Your Box orders.
           </p>
         </div>
       </div>

@@ -19,7 +19,7 @@ import {
   ArrowUpDown,
   Filter
 } from 'lucide-react'
-import { getShipments, voidLabel } from '@/lib/api'
+import { getShipments, voidLabel, forceVoidLocal } from '@/lib/api'
 
 interface Shipment {
   _id: string;
@@ -64,6 +64,8 @@ export default function ShipmentsPage() {
   const [voidingShipment, setVoidingShipment] = useState<Shipment | null>(null)
   const [voidReason, setVoidReason] = useState('')
   const [isVoiding, setIsVoiding] = useState(false)
+  const [showForceVoid, setShowForceVoid] = useState(false)
+  const [voidError, setVoidError] = useState<string | null>(null)
 
   async function loadShipments() {
     setLoading(true)
@@ -89,6 +91,7 @@ export default function ShipmentsPage() {
     
     setIsVoiding(true)
     setError(null)
+    setVoidError(null)
     
     try {
       const result = await voidLabel(voidingShipment.trackingNumber, voidReason)
@@ -100,12 +103,40 @@ export default function ShipmentsPage() {
       setSuccess(message)
       setVoidingShipment(null)
       setVoidReason('')
+      setShowForceVoid(false)
       
       // Refresh shipments
       await loadShipments()
       
     } catch (err: any) {
-      setError(`Failed to void label: ${err.message}`)
+      // Show force void option when UPS void fails
+      setVoidError(err.message)
+      setShowForceVoid(true)
+    } finally {
+      setIsVoiding(false)
+    }
+  }
+
+  async function handleForceVoid() {
+    if (!voidingShipment) return
+    
+    setIsVoiding(true)
+    setError(null)
+    
+    try {
+      const result = await forceVoidLocal(voidingShipment.trackingNumber, voidReason || 'Force void - UPS voided externally')
+      
+      setSuccess(`Label ${voidingShipment.trackingNumber} marked as voided locally.`)
+      setVoidingShipment(null)
+      setVoidReason('')
+      setShowForceVoid(false)
+      setVoidError(null)
+      
+      // Refresh shipments
+      await loadShipments()
+      
+    } catch (err: any) {
+      setError(`Failed to force void: ${err.message}`)
     } finally {
       setIsVoiding(false)
     }
@@ -486,37 +517,68 @@ export default function ShipmentsPage() {
                 />
               </div>
               
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-                <p className="text-sm text-yellow-800">
-                  <strong>Note:</strong> UPS may take a few minutes to process the void. 
-                  If it fails, wait 5-10 minutes and try again.
-                </p>
-              </div>
+              {/* Show error and force void option */}
+              {voidError ? (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                  <p className="text-sm text-red-800 font-medium mb-2">
+                    UPS void failed: {voidError}
+                  </p>
+                  <p className="text-sm text-red-700">
+                    If you already voided this label in UPS.com, use "Force Void Local" to mark it as voided here.
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+                  <p className="text-sm text-yellow-800">
+                    <strong>Note:</strong> UPS may take a few minutes to process the void. 
+                    If it fails, wait 5-10 minutes and try again.
+                  </p>
+                </div>
+              )}
             </div>
             
-            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50 border-t">
+            <div className="flex items-center justify-between px-6 py-4 bg-gray-50 border-t">
               <button
                 onClick={() => {
                   setVoidingShipment(null)
                   setVoidReason('')
+                  setShowForceVoid(false)
+                  setVoidError(null)
                 }}
                 disabled={isVoiding}
                 className="px-4 py-2 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
               >
                 Cancel
               </button>
-              <button
-                onClick={handleVoidLabel}
-                disabled={isVoiding}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
-              >
-                {isVoiding ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Trash2 className="w-4 h-4" />
+              
+              <div className="flex items-center gap-2">
+                {showForceVoid && (
+                  <button
+                    onClick={handleForceVoid}
+                    disabled={isVoiding}
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors disabled:opacity-50"
+                  >
+                    {isVoiding ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <XCircle className="w-4 h-4" />
+                    )}
+                    Force Void Local
+                  </button>
                 )}
-                {isVoiding ? 'Voiding...' : 'Void Label'}
-              </button>
+                <button
+                  onClick={handleVoidLabel}
+                  disabled={isVoiding}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {isVoiding ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                  {isVoiding ? 'Voiding...' : 'Void via UPS'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -173,6 +173,14 @@ export async function voidLabel(trackingNumber: string, reason?: string) {
   });
 }
 
+// Force void locally (when UPS void was done externally)
+export async function forceVoidLocal(trackingNumber: string, reason?: string) {
+  return fetchAPI(`/api/shipping/force-void/${trackingNumber}`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
 // Get shipping analytics
 export async function getShippingAnalytics(startDate?: string, endDate?: string) {
   const query = new URLSearchParams();

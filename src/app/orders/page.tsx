@@ -1990,48 +1990,174 @@ export default function OrdersPage() {
               )}
               
               {anyChanges && editingAddress.newRate !== null && !editingAddress.newRateError && (
-                <div className={`p-4 rounded-lg border-2 ${
-                  (editingAddress.customerPaid - editingAddress.newRate) >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
-                }`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <DollarSign className="w-5 h-5" />
-                      <span className="font-semibold text-gray-800">Cost Result</span>
+                <div className="space-y-4">
+                  {/* ===== CUSTOMER VIEW ===== */}
+                  <div className={`p-4 rounded-lg border-2 ${
+                    (editingAddress.customerPaid - editingAddress.newRate) >= 0 ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'
+                  }`}>
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-lg">👤</span>
+                      <span className="font-semibold text-gray-800">Customer View</span>
+                      <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full">What the customer sees</span>
                     </div>
-                    {(() => {
-                      const diff = editingAddress.customerPaid - editingAddress.newRate!
-                      const isLoss = diff < 0
-                      return (
-                        <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${isLoss ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                          {isLoss ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />}
-                          <span className="font-bold">{isLoss ? 'LOSS' : 'PROFIT'}: {isLoss ? '-' : '+'}${Math.abs(diff / 100).toFixed(2)}</span>
+                    
+                    <div className="grid grid-cols-3 gap-3 text-sm">
+                      <div className="text-center p-3 bg-white rounded-lg border border-gray-100">
+                        <div className="text-gray-500 text-xs mb-1">Already Paid</div>
+                        <div className="font-bold text-gray-800 text-lg">${(editingAddress.customerPaid / 100).toFixed(2)}</div>
+                      </div>
+                      <div className="text-center p-3 bg-white rounded-lg border border-gray-100">
+                        <div className="text-gray-500 text-xs mb-1">New Shipping Cost</div>
+                        <div className="font-bold text-gray-800 text-lg">${(editingAddress.newRate! / 100).toFixed(2)}</div>
+                      </div>
+                      <div className={`text-center p-3 rounded-lg ${
+                        (editingAddress.customerPaid - editingAddress.newRate!) >= 0 
+                          ? 'bg-green-100 border border-green-200' 
+                          : 'bg-red-100 border border-red-200'
+                      }`}>
+                        <div className="text-gray-600 text-xs mb-1">
+                          {(editingAddress.customerPaid - editingAddress.newRate!) >= 0 ? 'Covered ✓' : 'Must Pay'}
                         </div>
-                      )
-                    })()}
+                        <div className={`font-bold text-lg ${
+                          (editingAddress.customerPaid - editingAddress.newRate!) >= 0 ? 'text-green-700' : 'text-red-700'
+                        }`}>
+                          {(editingAddress.customerPaid - editingAddress.newRate!) >= 0 
+                            ? '$0.00' 
+                            : `$${Math.abs((editingAddress.customerPaid - editingAddress.newRate!) / 100).toFixed(2)}`
+                          }
+                        </div>
+                      </div>
+                    </div>
                   </div>
                   
-                  <div className="grid grid-cols-3 gap-4 text-sm">
-                    <div className="text-center p-2 bg-white rounded-lg">
-                      <div className="text-gray-500 text-xs mb-1">Customer Paid</div>
-                      <div className="font-bold text-gray-800">${(editingAddress.customerPaid / 100).toFixed(2)}</div>
+                  {/* ===== ADMIN/BUSINESS VIEW ===== */}
+                  <div className="p-4 rounded-lg border-2 bg-gray-50 border-gray-300">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-lg">📊</span>
+                      <span className="font-semibold text-gray-800">Business Analysis</span>
+                      <span className="text-xs text-gray-500 bg-white px-2 py-0.5 rounded-full">Your real costs</span>
                     </div>
-                    <div className="text-center p-2 bg-white rounded-lg">
-                      <div className="text-gray-500 text-xs mb-1">New Rate</div>
-                      <div className={`font-bold ${editingAddress.newRate! > editingAddress.customerPaid ? 'text-red-600' : 'text-green-600'}`}>
-                        ${(editingAddress.newRate! / 100).toFixed(2)}
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      {/* Left: Original Scenario */}
+                      <div className="p-3 bg-white rounded-lg border border-gray-200">
+                        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">📍 Original Address</div>
+                        <div className="space-y-1.5 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Customer paid:</span>
+                            <span className="font-medium">${(editingAddress.customerPaid / 100).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Your UPS cost:</span>
+                            <span className="font-medium">
+                              {editingAddress.originalRate 
+                                ? `$${(editingAddress.originalRate / 100).toFixed(2)}`
+                                : <span className="text-gray-400 italic">Unknown</span>
+                              }
+                            </span>
+                          </div>
+                          <div className="flex justify-between pt-1.5 border-t border-gray-100">
+                            <span className="text-gray-700 font-medium">Your margin:</span>
+                            <span className={`font-bold ${
+                              editingAddress.originalRate 
+                                ? (editingAddress.customerPaid - editingAddress.originalRate) >= 0 
+                                  ? 'text-green-600' 
+                                  : 'text-red-600'
+                                : 'text-gray-400'
+                            }`}>
+                              {editingAddress.originalRate 
+                                ? `${(editingAddress.customerPaid - editingAddress.originalRate) >= 0 ? '+' : ''}$${((editingAddress.customerPaid - editingAddress.originalRate) / 100).toFixed(2)}`
+                                : '—'
+                              }
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {/* Right: New Scenario */}
+                      <div className="p-3 bg-white rounded-lg border border-gray-200">
+                        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">📍 New Address</div>
+                        <div className="space-y-1.5 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Customer pays total:</span>
+                            <span className="font-medium">
+                              ${((editingAddress.customerPaid + Math.max(0, editingAddress.newRate! - editingAddress.customerPaid)) / 100).toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Your UPS cost:</span>
+                            <span className="font-medium text-blue-600">${(editingAddress.newRate! / 100).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between pt-1.5 border-t border-gray-100">
+                            <span className="text-gray-700 font-medium">Your margin:</span>
+                            {(() => {
+                              // If customer pays the difference, margin is recovered
+                              const customerTotal = editingAddress.customerPaid + Math.max(0, editingAddress.newRate! - editingAddress.customerPaid);
+                              const newMargin = customerTotal - editingAddress.newRate!;
+                              return (
+                                <span className={`font-bold ${newMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                  {newMargin >= 0 ? '+' : ''}${(newMargin / 100).toFixed(2)}
+                                </span>
+                              );
+                            })()}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                    <div className="text-center p-2 bg-white rounded-lg">
-                      <div className="text-gray-500 text-xs mb-1">Difference</div>
-                      <div className={`font-bold ${(editingAddress.customerPaid - editingAddress.newRate!) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {(editingAddress.customerPaid - editingAddress.newRate!) >= 0 ? '+' : ''}${((editingAddress.customerPaid - editingAddress.newRate!) / 100).toFixed(2)}
+                    
+                    {/* Impact Summary */}
+                    {editingAddress.originalRate && (
+                      <div className="mt-3 p-3 bg-gray-100 rounded-lg">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-gray-700">
+                            {addressChanged && (editingAddress.customerPaid - editingAddress.newRate!) < 0 
+                              ? '📌 After customer pays difference:'
+                              : '📌 Margin change:'
+                            }
+                          </span>
+                          {(() => {
+                            const originalMargin = editingAddress.customerPaid - editingAddress.originalRate;
+                            // If we charge the customer the difference, our margin stays the same as customer paid - new rate when positive
+                            // or becomes 0 when customer pays exactly the new rate
+                            let newMargin: number;
+                            if (addressChanged && (editingAddress.customerPaid - editingAddress.newRate!) < 0) {
+                              // Customer pays difference, so new margin = original margin (we recover it)
+                              newMargin = 0; // Break even after customer pays
+                            } else {
+                              newMargin = editingAddress.customerPaid - editingAddress.newRate!;
+                            }
+                            const marginChange = newMargin - originalMargin;
+                            
+                            return (
+                              <span className={`font-bold ${marginChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                {marginChange >= 0 ? 'No loss ✓' : `Margin loss: -$${Math.abs(originalMargin / 100).toFixed(2)}`}
+                              </span>
+                            );
+                          })()}
+                        </div>
+                        
+                        {/* Extra explanation for address changes */}
+                        {addressChanged && (editingAddress.customerPaid - editingAddress.newRate!) < 0 && (
+                          <p className="mt-2 text-xs text-gray-600">
+                            💡 Customer will pay <strong>${Math.abs((editingAddress.customerPaid - editingAddress.newRate!) / 100).toFixed(2)}</strong> extra. 
+                            This covers the UPS cost increase, but you lose your original margin of 
+                            <strong> ${editingAddress.originalRate ? ((editingAddress.customerPaid - editingAddress.originalRate) / 100).toFixed(2) : '?'}</strong>.
+                          </p>
+                        )}
                       </div>
-                    </div>
+                    )}
+                    
+                    {/* Warning if no original rate */}
+                    {!editingAddress.originalRate && (
+                      <div className="mt-3 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                        ⚠️ Original UPS rate unknown. Click "Get Rates" on the orders table first to see margin impact.
+                      </div>
+                    )}
                   </div>
                   
                   {/* Address change with additional cost = needs Change Request */}
                   {addressChanged && (editingAddress.customerPaid - editingAddress.newRate!) < 0 && (
-                    <div className="mt-4 p-3 bg-amber-100 border border-amber-300 rounded-lg">
+                    <div className="p-4 bg-amber-100 border-2 border-amber-400 rounded-lg">
                       <p className="text-sm text-amber-800 mb-3">
                         <strong>⚠️ Address change requires additional payment.</strong><br />
                         Create a Change Request to send the customer a Shopify invoice for <strong>${Math.abs((editingAddress.customerPaid - editingAddress.newRate!) / 100).toFixed(2)}</strong>.
@@ -2060,7 +2186,7 @@ export default function OrdersPage() {
                   
                   {/* Package only change with loss = just warning, no change request needed */}
                   {!addressChanged && packageChanged && (editingAddress.customerPaid - editingAddress.newRate!) < 0 && (
-                    <div className="mt-4 p-3 bg-red-100 border border-red-300 rounded-lg">
+                    <div className="p-4 bg-red-100 border-2 border-red-300 rounded-lg">
                       <p className="text-sm text-red-800">
                         <strong>📦 Package adjustment results in higher shipping cost.</strong><br />
                         This is an internal adjustment - you can proceed to save and ship (absorbing the loss), or adjust the package dimensions.

@@ -650,13 +650,19 @@ export default function OrdersPage() {
       return
     }
     
+    // Only create change request for address changes
+    if (!hasAddressChanged()) {
+      setError('Change requests are only for address changes')
+      return
+    }
+    
     setSendingInvoice(true)
     setError(null)
     
     try {
       const API_BASE = process.env.NEXT_PUBLIC_API_URL || ''
       
-      // Step 1: Create the change request
+      // Step 1: Create the change request (address only)
       const createRes = await fetch(`${API_BASE}/api/change-requests`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -666,13 +672,14 @@ export default function OrdersPage() {
           customer: editingAddress.customer,
           originalAddress: editingAddress.originalShipTo,
           newAddress: editingAddress.shipTo,
+          // Use original package for change request (address change only)
           originalPackage: editingAddress.originalPackage,
-          newPackage: editingAddress.package,
+          newPackage: editingAddress.originalPackage,
           customerPaid: editingAddress.customerPaid,
           originalRate: editingAddress.originalRate,
           newRate: editingAddress.newRate,
-          addressChanged: hasAddressChanged(),
-          packageChanged: hasPackageChanged()
+          addressChanged: true,
+          packageChanged: false
         })
       })
       
@@ -684,7 +691,7 @@ export default function OrdersPage() {
       
       const changeRequestId = createData.request._id
       
-      // Step 2: Send the invoice (creates Stripe Payment Link + email)
+      // Step 2: Send the invoice (creates Shopify Draft Order + email)
       const invoiceRes = await fetch(`${API_BASE}/api/change-requests/${changeRequestId}/send-invoice`, {
         method: 'POST'
       })
@@ -1771,79 +1778,19 @@ export default function OrdersPage() {
             </div>
             
             {/* Modal Body */}
-            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-              {/* Address Section Header */}
-              <div className="flex items-center gap-2 mb-1">
-                <MapPin className="w-5 h-5 text-gray-600" />
-                <span className="font-semibold text-gray-800">Shipping Address</span>
-              </div>
+            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
               
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Recipient Name *</label>
-                <input type="text" value={editingAddress.shipTo.name}
-                  onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, name: e.target.value } })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
-                  placeholder="John Doe" />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Street Address *</label>
-                <input type="text" value={editingAddress.shipTo.street1}
-                  onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, street1: e.target.value } })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
-                  placeholder="123 Main St" />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Apt/Suite/Unit</label>
-                <input type="text" value={editingAddress.shipTo.street2}
-                  onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, street2: e.target.value } })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
-                  placeholder="Apt 4B" />
-              </div>
-              
-              <div className="grid grid-cols-6 gap-3">
-                <div className="col-span-3">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">City *</label>
-                  <input type="text" value={editingAddress.shipTo.city}
-                    onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, city: e.target.value } })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
-                    placeholder="Newark" />
-                </div>
-                <div className="col-span-1">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">State *</label>
-                  <input type="text" value={editingAddress.shipTo.state} maxLength={2}
-                    onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, state: e.target.value.toUpperCase() } })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500 uppercase"
-                    placeholder="NJ" />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">ZIP Code *</label>
-                  <input type="text" value={editingAddress.shipTo.zip} maxLength={10}
-                    onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, zip: e.target.value }, newRate: null, newRateError: null })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
-                    placeholder="07102" />
-                </div>
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                <input type="tel" value={editingAddress.shipTo.phone}
-                  onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, phone: e.target.value } })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
-                  placeholder="(555) 123-4567" />
-              </div>
-              
-              {/* Package Section */}
-              <div className="pt-4 mt-4 border-t border-gray-200">
+              {/* ==================== PACKAGE SECTION ==================== */}
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
                 <div className="flex items-center gap-2 mb-3">
-                  <Package className="w-5 h-5 text-gray-600" />
-                  <span className="font-semibold text-gray-800">Package Details</span>
+                  <Package className="w-5 h-5 text-blue-600" />
+                  <span className="font-semibold text-blue-800">Package Details</span>
+                  <span className="text-xs text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">Internal adjustment</span>
                 </div>
                 
                 <div className="grid grid-cols-4 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Weight (lbs) *</label>
+                    <label className="block text-xs font-medium text-blue-700 mb-1">Weight (lbs) *</label>
                     <input 
                       type="number" 
                       step="0.1"
@@ -1855,11 +1802,11 @@ export default function OrdersPage() {
                         newRate: null,
                         newRateError: null
                       })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                      className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Length (in)</label>
+                    <label className="block text-xs font-medium text-blue-700 mb-1">Length (in)</label>
                     <input 
                       type="number" 
                       step="1"
@@ -1871,11 +1818,11 @@ export default function OrdersPage() {
                         newRate: null,
                         newRateError: null
                       })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                      className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Width (in)</label>
+                    <label className="block text-xs font-medium text-blue-700 mb-1">Width (in)</label>
                     <input 
                       type="number" 
                       step="1"
@@ -1887,11 +1834,11 @@ export default function OrdersPage() {
                         newRate: null,
                         newRateError: null
                       })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                      className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium text-gray-600 mb-1">Height (in)</label>
+                    <label className="block text-xs font-medium text-blue-700 mb-1">Height (in)</label>
                     <input 
                       type="number" 
                       step="1"
@@ -1903,147 +1850,231 @@ export default function OrdersPage() {
                         newRate: null,
                         newRateError: null
                       })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pickle-500 focus:border-pickle-500"
+                      className="w-full px-3 py-2 border border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
                     />
                   </div>
                 </div>
                 
                 {/* Show original values if changed */}
                 {packageChanged && (
-                  <div className="mt-2 text-xs text-gray-500">
-                    Original: {editingAddress.originalPackage.weight} lbs, {editingAddress.originalPackage.length}×{editingAddress.originalPackage.width}×{editingAddress.originalPackage.height} in
+                  <div className="mt-3 p-2 bg-blue-100 rounded-lg flex items-center justify-between">
+                    <span className="text-xs text-blue-700">
+                      Original: {editingAddress.originalPackage.weight} lbs, {editingAddress.originalPackage.length}×{editingAddress.originalPackage.width}×{editingAddress.originalPackage.height}&quot;
+                    </span>
+                    <span className="text-xs font-medium text-blue-800">
+                      → {editingAddress.package.weight} lbs, {editingAddress.package.length}×{editingAddress.package.width}×{editingAddress.package.height}&quot;
+                    </span>
+                  </div>
+                )}
+                
+                <p className="mt-3 text-xs text-blue-600">
+                  💡 Package changes are internal adjustments. Save to update the shipping rate calculation.
+                </p>
+              </div>
+              
+              {/* ==================== ADDRESS SECTION ==================== */}
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                <div className="flex items-center gap-2 mb-3">
+                  <MapPin className="w-5 h-5 text-amber-600" />
+                  <span className="font-semibold text-amber-800">Shipping Address</span>
+                  <span className="text-xs text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">May require customer payment</span>
+                </div>
+                
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-amber-700 mb-1">Recipient Name *</label>
+                    <input type="text" value={editingAddress.shipTo.name}
+                      onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, name: e.target.value } })}
+                      className="w-full px-3 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
+                      placeholder="John Doe" />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs font-medium text-amber-700 mb-1">Street Address *</label>
+                    <input type="text" value={editingAddress.shipTo.street1}
+                      onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, street1: e.target.value } })}
+                      className="w-full px-3 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
+                      placeholder="123 Main St" />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs font-medium text-amber-700 mb-1">Apt/Suite/Unit</label>
+                    <input type="text" value={editingAddress.shipTo.street2}
+                      onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, street2: e.target.value } })}
+                      className="w-full px-3 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
+                      placeholder="Apt 4B" />
+                  </div>
+                  
+                  <div className="grid grid-cols-6 gap-3">
+                    <div className="col-span-3">
+                      <label className="block text-xs font-medium text-amber-700 mb-1">City *</label>
+                      <input type="text" value={editingAddress.shipTo.city}
+                        onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, city: e.target.value } })}
+                        className="w-full px-3 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
+                        placeholder="Newark" />
+                    </div>
+                    <div className="col-span-1">
+                      <label className="block text-xs font-medium text-amber-700 mb-1">State *</label>
+                      <input type="text" value={editingAddress.shipTo.state} maxLength={2}
+                        onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, state: e.target.value.toUpperCase() } })}
+                        className="w-full px-3 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 uppercase bg-white"
+                        placeholder="NJ" />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-xs font-medium text-amber-700 mb-1">ZIP Code *</label>
+                      <input type="text" value={editingAddress.shipTo.zip} maxLength={10}
+                        onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, zip: e.target.value }, newRate: null, newRateError: null })}
+                        className="w-full px-3 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
+                        placeholder="07102" />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs font-medium text-amber-700 mb-1">Phone</label>
+                    <input type="tel" value={editingAddress.shipTo.phone}
+                      onChange={(e) => setEditingAddress({ ...editingAddress, shipTo: { ...editingAddress.shipTo, phone: e.target.value } })}
+                      className="w-full px-3 py-2 border border-amber-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white"
+                      placeholder="(555) 123-4567" />
+                  </div>
+                </div>
+                
+                {/* Show original address if changed */}
+                {addressChanged && (
+                  <div className="mt-3 p-2 bg-amber-100 rounded-lg">
+                    <div className="flex items-start justify-between text-xs">
+                      <div className="text-amber-700">
+                        <div className="font-medium mb-0.5">Original:</div>
+                        {editingAddress.originalShipTo.street1}, {editingAddress.originalShipTo.city}, {editingAddress.originalShipTo.state} {editingAddress.originalShipTo.zip}
+                      </div>
+                      <div className="text-amber-800 text-right">
+                        <div className="font-medium mb-0.5">New:</div>
+                        {editingAddress.shipTo.street1}, {editingAddress.shipTo.city}, {editingAddress.shipTo.state} {editingAddress.shipTo.zip}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Address change warning */}
+                {addressChanged && (
+                  <div className="mt-3 p-3 bg-amber-100 border border-amber-300 rounded-lg">
+                    <p className="text-sm text-amber-800">
+                      ⚠️ <strong>Address changed!</strong> If shipping costs more, you&apos;ll need to create a Change Request to collect payment from the customer via Shopify.
+                    </p>
                   </div>
                 )}
               </div>
               
-              {/* Calculate Rate Button */}
+              {/* ==================== RATE CALCULATION ==================== */}
               {anyChanges && canCalculateRate && (
-                <div className="pt-2">
+                <div className="flex items-center gap-3">
                   <button onClick={calculateNewRate} disabled={editingAddress.newRateLoading}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 font-medium">
+                    className="flex items-center gap-2 px-4 py-2.5 bg-gray-800 text-white rounded-lg hover:bg-gray-900 transition-colors disabled:opacity-50 font-medium">
                     {editingAddress.newRateLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Calculator className="w-4 h-4" />}
                     {editingAddress.newRateLoading ? 'Calculating...' : 'Calculate New Rate'}
                   </button>
-                  {(addressChanged || packageChanged) && (
-                    <p className="mt-2 text-xs text-gray-500">
-                      {addressChanged && packageChanged ? '📍 Address & 📦 Package changed' : 
-                       addressChanged ? '📍 Address changed' : '📦 Package changed'}
-                    </p>
-                  )}
+                  <span className="text-sm text-gray-500">
+                    {addressChanged && packageChanged ? '📍 Address & 📦 Package changed' : 
+                     addressChanged ? '📍 Address changed' : '📦 Package changed'}
+                  </span>
                 </div>
               )}
               
-              {/* Cost Comparison Box */}
-              {anyChanges && (editingAddress.newRate !== null || editingAddress.newRateError) && (
+              {/* ==================== COST RESULT ==================== */}
+              {anyChanges && editingAddress.newRateError && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="text-red-600 flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5" />
+                    {editingAddress.newRateError}
+                  </div>
+                </div>
+              )}
+              
+              {anyChanges && editingAddress.newRate !== null && !editingAddress.newRateError && (
                 <div className={`p-4 rounded-lg border-2 ${
-                  editingAddress.newRateError ? 'bg-red-50 border-red-200' 
-                    : (editingAddress.customerPaid - editingAddress.newRate!) >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+                  (editingAddress.customerPaid - editingAddress.newRate) >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
                 }`}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <DollarSign className="w-5 h-5" />
-                    <span className="font-semibold text-gray-800">Cost Comparison</span>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <DollarSign className="w-5 h-5" />
+                      <span className="font-semibold text-gray-800">Cost Result</span>
+                    </div>
+                    {(() => {
+                      const diff = editingAddress.customerPaid - editingAddress.newRate!
+                      const isLoss = diff < 0
+                      return (
+                        <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${isLoss ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                          {isLoss ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />}
+                          <span className="font-bold">{isLoss ? 'LOSS' : 'PROFIT'}: {isLoss ? '-' : '+'}${Math.abs(diff / 100).toFixed(2)}</span>
+                        </div>
+                      )
+                    })()}
                   </div>
                   
-                  {editingAddress.newRateError ? (
-                    <div className="text-red-600"><AlertCircle className="w-4 h-4 inline mr-1" />{editingAddress.newRateError}</div>
-                  ) : (
-                    <div className="space-y-2 text-sm">
-                      {/* Changes Summary */}
-                      <div className="grid grid-cols-2 gap-4 pb-3 border-b border-gray-200">
-                        {addressChanged && (
-                          <>
-                            <div>
-                              <div className="text-gray-500 text-xs uppercase mb-1">📍 Original Address</div>
-                              <div className="font-medium">{editingAddress.originalShipTo.city}, {editingAddress.originalShipTo.state} {editingAddress.originalShipTo.zip}</div>
-                            </div>
-                            <div>
-                              <div className="text-gray-500 text-xs uppercase mb-1">📍 New Address</div>
-                              <div className="font-medium">{editingAddress.shipTo.city}, {editingAddress.shipTo.state} {editingAddress.shipTo.zip}</div>
-                            </div>
-                          </>
-                        )}
-                        {packageChanged && (
-                          <>
-                            <div>
-                              <div className="text-gray-500 text-xs uppercase mb-1">📦 Original Package</div>
-                              <div className="font-medium">{editingAddress.originalPackage.weight} lbs, {editingAddress.originalPackage.length}×{editingAddress.originalPackage.width}×{editingAddress.originalPackage.height}&quot;</div>
-                            </div>
-                            <div>
-                              <div className="text-gray-500 text-xs uppercase mb-1">📦 New Package</div>
-                              <div className="font-medium">{editingAddress.package.weight} lbs, {editingAddress.package.length}×{editingAddress.package.width}×{editingAddress.package.height}&quot;</div>
-                            </div>
-                          </>
-                        )}
+                  <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div className="text-center p-2 bg-white rounded-lg">
+                      <div className="text-gray-500 text-xs mb-1">Customer Paid</div>
+                      <div className="font-bold text-gray-800">${(editingAddress.customerPaid / 100).toFixed(2)}</div>
+                    </div>
+                    <div className="text-center p-2 bg-white rounded-lg">
+                      <div className="text-gray-500 text-xs mb-1">New Rate</div>
+                      <div className={`font-bold ${editingAddress.newRate! > editingAddress.customerPaid ? 'text-red-600' : 'text-green-600'}`}>
+                        ${(editingAddress.newRate! / 100).toFixed(2)}
                       </div>
-                      
-                      {/* Cost Breakdown */}
-                      <div className="space-y-2 pt-2">
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Customer Paid:</span>
-                          <span className="font-semibold">${(editingAddress.customerPaid / 100).toFixed(2)}</span>
-                        </div>
-                        
-                        {editingAddress.originalRate && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Original Rate:</span>
-                            <span className="font-medium">
-                              ${(editingAddress.originalRate / 100).toFixed(2)}
-                              <span className={`ml-2 text-xs ${(editingAddress.customerPaid - editingAddress.originalRate) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                ({(editingAddress.customerPaid - editingAddress.originalRate) >= 0 ? '+' : ''}${((editingAddress.customerPaid - editingAddress.originalRate) / 100).toFixed(2)})
-                              </span>
-                            </span>
+                    </div>
+                    <div className="text-center p-2 bg-white rounded-lg">
+                      <div className="text-gray-500 text-xs mb-1">Difference</div>
+                      <div className={`font-bold ${(editingAddress.customerPaid - editingAddress.newRate!) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {(editingAddress.customerPaid - editingAddress.newRate!) >= 0 ? '+' : ''}${((editingAddress.customerPaid - editingAddress.newRate!) / 100).toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Address change with additional cost = needs Change Request */}
+                  {addressChanged && (editingAddress.customerPaid - editingAddress.newRate!) < 0 && (
+                    <div className="mt-4 p-3 bg-amber-100 border border-amber-300 rounded-lg">
+                      <p className="text-sm text-amber-800 mb-3">
+                        <strong>⚠️ Address change requires additional payment.</strong><br />
+                        Create a Change Request to send the customer a Shopify invoice for <strong>${Math.abs((editingAddress.customerPaid - editingAddress.newRate!) / 100).toFixed(2)}</strong>.
+                      </p>
+                      {editingAddress.customer?.email ? (
+                        invoiceSent ? (
+                          <div className="flex items-center gap-2 px-4 py-2 text-green-700 bg-green-100 border border-green-300 rounded-lg text-sm font-medium">
+                            <CheckCircle className="w-4 h-4" />
+                            Change Request Created & Invoice Sent!
                           </div>
-                        )}
-                        
-                        <div className="flex justify-between text-base font-semibold pt-2 border-t border-gray-200">
-                          <span>NEW Rate:</span>
-                          <span className={editingAddress.newRate! > editingAddress.customerPaid ? 'text-red-600' : 'text-green-600'}>
-                            ${(editingAddress.newRate! / 100).toFixed(2)}
-                          </span>
-                        </div>
-                        
-                        {/* Profit/Loss */}
-                        {(() => {
-                          const diff = editingAddress.customerPaid - editingAddress.newRate!
-                          const isLoss = diff < 0
-                          const rateDiff = editingAddress.originalRate ? editingAddress.newRate! - editingAddress.originalRate : 0
-                          
-                          return (
-                            <div className={`p-3 rounded-lg mt-2 ${isLoss ? 'bg-red-100' : 'bg-green-100'}`}>
-                              <div className="flex items-center gap-2">
-                                {isLoss ? <TrendingDown className="w-5 h-5 text-red-600" /> : <TrendingUp className="w-5 h-5 text-green-600" />}
-                                <span className={`font-bold ${isLoss ? 'text-red-700' : 'text-green-700'}`}>
-                                  {isLoss ? 'LOSS' : 'PROFIT'}: {isLoss ? '-' : '+'}${Math.abs(diff / 100).toFixed(2)}
-                                </span>
-                              </div>
-                              {rateDiff > 0 && (
-                                <div className="mt-2 text-sm text-red-600">
-                                  ⚠️ Address change costs <strong>${(rateDiff / 100).toFixed(2)} MORE</strong> than original
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })()}
-                      </div>
+                        ) : (
+                          <button 
+                            onClick={sendInvoiceEmail}
+                            disabled={sendingInvoice}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors font-medium disabled:opacity-50"
+                          >
+                            {sendingInvoice ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileEdit className="w-4 h-4" />}
+                            {sendingInvoice ? 'Creating...' : `Create Change Request (+$${Math.abs((editingAddress.customerPaid - editingAddress.newRate!) / 100).toFixed(2)})`}
+                          </button>
+                        )
+                      ) : (
+                        <div className="text-sm text-amber-700 italic">⚠️ No customer email available</div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Package only change with loss = just warning, no change request needed */}
+                  {!addressChanged && packageChanged && (editingAddress.customerPaid - editingAddress.newRate!) < 0 && (
+                    <div className="mt-4 p-3 bg-red-100 border border-red-300 rounded-lg">
+                      <p className="text-sm text-red-800">
+                        <strong>📦 Package adjustment results in higher shipping cost.</strong><br />
+                        This is an internal adjustment - you can proceed to save and ship (absorbing the loss), or adjust the package dimensions.
+                      </p>
                     </div>
                   )}
                 </div>
               )}
               
-              {/* Warning for no rate calculated yet */}
-              {anyChanges && editingAddress.newRate === null && !editingAddress.newRateLoading && !editingAddress.newRateError && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <p className="text-sm text-amber-700">
-                    ⚠️ <strong>{addressChanged && packageChanged ? 'Address & package changed!' : addressChanged ? 'Address changed!' : 'Package changed!'}</strong> Click &quot;Calculate New Rate&quot; to see shipping cost before saving.
-                  </p>
-                </div>
-              )}
-              
-              {/* Standard info when no changes */}
+              {/* Info when no changes */}
               {!anyChanges && (
                 <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
                   <p className="text-sm text-gray-600">
-                    💡 Changes are temporary and only affect this shipping session. The original Shopify order will not be updated.
+                    💡 <strong>Package changes</strong> are internal adjustments (save directly). <strong>Address changes</strong> that cost more will require a Change Request to collect payment from the customer.
                   </p>
                 </div>
               )}
@@ -2052,38 +2083,14 @@ export default function OrdersPage() {
             {/* Modal Footer */}
             <div className="px-6 py-4 bg-gray-50 border-t border-gray-200">
               <div className="flex items-center justify-between">
-                {/* Left side - Invoice actions */}
+                {/* Left side - Copy text for manual invoice */}
                 <div className="flex items-center gap-2">
-                  {anyChanges && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 && (
-                    <>
-                      {/* Send Invoice Email Button */}
-                      {editingAddress.customer?.email ? (
-                        invoiceSent ? (
-                          <div className="flex items-center gap-2 px-3 py-2 text-green-700 bg-green-100 border border-green-300 rounded-lg text-sm font-medium">
-                            <CheckCircle className="w-4 h-4" />
-                            Invoice Sent!
-                          </div>
-                        ) : (
-                          <button 
-                            onClick={sendInvoiceEmail}
-                            disabled={sendingInvoice}
-                            className="flex items-center gap-2 px-3 py-2 text-blue-700 bg-blue-100 border border-blue-300 rounded-lg hover:bg-blue-200 transition-colors text-sm font-medium disabled:opacity-50"
-                          >
-                            {sendingInvoice ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                            {sendingInvoice ? 'Sending...' : 'Send Invoice Email'}
-                          </button>
-                        )
-                      ) : (
-                        <div className="text-xs text-gray-500 italic">No customer email</div>
-                      )}
-                      
-                      {/* Copy Invoice Button */}
-                      <button onClick={copyInvoiceText}
-                        className="flex items-center gap-2 px-3 py-2 text-amber-700 bg-amber-100 border border-amber-300 rounded-lg hover:bg-amber-200 transition-colors text-sm font-medium">
-                        <Copy className="w-4 h-4" />
-                        {copiedInvoice ? 'Copied!' : 'Copy Text'}
-                      </button>
-                    </>
+                  {addressChanged && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 && (
+                    <button onClick={copyInvoiceText}
+                      className="flex items-center gap-2 px-3 py-2 text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm">
+                      <Copy className="w-4 h-4" />
+                      {copiedInvoice ? 'Copied!' : 'Copy Invoice Text'}
+                    </button>
                   )}
                 </div>
                 
@@ -2094,28 +2101,42 @@ export default function OrdersPage() {
                     Cancel
                   </button>
                   
-                  {anyChanges && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 ? (
-                    <button onClick={saveAddress} disabled={savingAddress}
-                      className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium">
-                      {savingAddress ? <Loader2 className="w-4 h-4 animate-spin" /> : <AlertTriangle className="w-4 h-4" />}
-                      Proceed with Loss (-${Math.abs((editingAddress.customerPaid - editingAddress.newRate) / 100).toFixed(2)})
-                    </button>
+                  {/* If address changed with loss, don't show save - they need to create change request */}
+                  {addressChanged && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 ? (
+                    invoiceSent ? (
+                      <button onClick={() => setEditingAddress(null)}
+                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium">
+                        <CheckCircle className="w-4 h-4" />
+                        Done
+                      </button>
+                    ) : (
+                      <div className="text-sm text-gray-500 italic">
+                        Create Change Request to proceed →
+                      </div>
+                    )
                   ) : (
+                    /* Package only change or no loss - can save directly */
                     <button onClick={saveAddress}
                       disabled={savingAddress || !editingAddress.shipTo.name || !editingAddress.shipTo.street1 || !editingAddress.shipTo.city || !editingAddress.shipTo.state || !editingAddress.shipTo.zip}
-                      className="flex items-center gap-2 px-4 py-2 bg-pickle-600 text-white rounded-lg hover:bg-pickle-700 transition-colors font-medium disabled:opacity-50">
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors font-medium disabled:opacity-50 ${
+                        packageChanged && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0
+                          ? 'bg-red-600 text-white hover:bg-red-700'
+                          : 'bg-pickle-600 text-white hover:bg-pickle-700'
+                      }`}>
                       {savingAddress ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                      {anyChanges && editingAddress.newRate === null ? 'Save (Rate Unknown)' : 'Save Changes'}
+                      {packageChanged && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0
+                        ? `Save & Accept Loss (-$${Math.abs((editingAddress.customerPaid - editingAddress.newRate) / 100).toFixed(2)})`
+                        : anyChanges && editingAddress.newRate === null ? 'Save (Rate Unknown)' : 'Save Changes'}
                     </button>
                   )}
                 </div>
               </div>
               
               {/* Customer email info */}
-              {anyChanges && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 && editingAddress.customer?.email && (
+              {addressChanged && editingAddress.newRate !== null && (editingAddress.customerPaid - editingAddress.newRate) < 0 && editingAddress.customer?.email && !invoiceSent && (
                 <div className="mt-3 pt-3 border-t border-gray-200 text-xs text-gray-500 flex items-center gap-2">
                   <Mail className="w-3.5 h-3.5" />
-                  Invoice will be sent to: <span className="font-medium text-gray-700">{editingAddress.customer.email}</span>
+                  Shopify invoice will be sent to: <span className="font-medium text-gray-700">{editingAddress.customer.email}</span>
                 </div>
               )}
             </div>

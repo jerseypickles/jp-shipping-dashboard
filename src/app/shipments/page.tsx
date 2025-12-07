@@ -17,7 +17,8 @@ import {
   Eye,
   EyeOff,
   ArrowUpDown,
-  Filter
+  Filter,
+  Box
 } from 'lucide-react'
 import { getShipments, voidLabel, forceVoidLocal } from '@/lib/api'
 
@@ -33,6 +34,7 @@ interface Shipment {
   zone: number;
   status: string;
   createdAt: string;
+  hasBYB?: boolean;
 }
 
 const statusConfig: Record<string, { icon: any; color: string; label: string; order: number }> = {
@@ -400,9 +402,20 @@ export default function ShipmentsPage() {
                       className={isVoided ? 'bg-gray-50 opacity-60' : 'hover:bg-gray-50'}
                     >
                       <td className="px-4 py-4">
-                        <span className={`font-semibold ${isVoided ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
-                          {shipment.orderNumber}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`font-semibold ${isVoided ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
+                            {shipment.orderNumber}
+                          </span>
+                          {shipment.hasBYB && !isVoided && (
+                            <span 
+                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-700"
+                              title="Build Your Box"
+                            >
+                              <Box className="w-2.5 h-2.5" />
+                              BYB
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-4">
                         <a 

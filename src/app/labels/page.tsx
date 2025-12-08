@@ -142,28 +142,17 @@ export default function LabelsPage() {
     try {
       const selectedIds = Array.from(selected)
       
-      // Open batch print page with selected IDs via POST form
-      const form = document.createElement('form')
-      form.method = 'POST'
-      form.action = `${API_BASE}/api/labels/batch`
-      form.target = '_blank'
-      form.enctype = 'application/json'
-      
-      // Create hidden input with JSON data
-      const input = document.createElement('input')
-      input.type = 'hidden'
-      input.name = 'data'
-      input.value = JSON.stringify({ shipmentIds: selectedIds })
-      form.appendChild(input)
-      
-      // Actually we need to use fetch + blob for POST
+      // Use fetch + blob for POST request
       const response = await fetch(`${API_BASE}/api/labels/batch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ shipmentIds: selectedIds })
       })
       
-      if (!response.ok) throw new Error('Failed to get batch labels')
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to get batch labels')
+      }
       
       const html = await response.text()
       const blob = new Blob([html], { type: 'text/html' })
@@ -192,6 +181,10 @@ export default function LabelsPage() {
     }
   }
 
+  // =============================================
+  // FIXED: Use fetch + blob instead of window.open directly
+  // This avoids popup blocker issues
+  // =============================================
   async function handlePrintAllQueue() {
     const toPrint = labels.filter(l => l.status === 'label_created')
     if (toPrint.length === 0) {
@@ -203,7 +196,18 @@ export default function LabelsPage() {
     setError(null)
     
     try {
-      window.open(`${API_BASE}/api/labels/queue/download`, '_blank')
+      // Use fetch + blob approach (same as handleBatchPrint) to avoid popup blocker
+      const response = await fetch(`${API_BASE}/api/labels/queue/download`)
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Failed to get print queue')
+      }
+      
+      const html = await response.text()
+      const blob = new Blob([html], { type: 'text/html' })
+      const url = URL.createObjectURL(blob)
+      window.open(url, '_blank')
       
       // Mark all as printed
       await markLabelsPrinted(toPrint.map(l => l._id))
@@ -572,6 +576,7 @@ export default function LabelsPage() {
       <div className="mt-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
         <h4 className="font-medium text-gray-900 mb-2">📋 How to use:</h4>
         <ul className="text-sm text-gray-600 space-y-1 list-disc list-inside">
+          <li><strong>Print All</strong> - Opens all queue labels and marks them as printed</li>
           <li><strong>Select labels</strong> using checkboxes (click header checkbox to select all)</li>
           <li><strong>Print Selected</strong> - Opens batch print window (doesn&apos;t mark as printed)</li>
           <li><strong>Print &amp; Mark</strong> - Opens print window AND marks unprinted labels as printed</li>

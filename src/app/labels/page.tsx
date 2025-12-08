@@ -530,78 +530,91 @@ export default function LabelsPage() {
 
       {/* Label + Packing Slip Preview Modal */}
       {previewLabel && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setPreviewLabel(null)}
+        >
+          <div 
+            className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Header */}
-            <div className="p-4 border-b flex items-center justify-between flex-shrink-0">
+            <div className="p-3 sm:p-4 border-b flex items-center justify-between flex-shrink-0 bg-gray-50">
               <div>
-                <h3 className="font-semibold text-lg">Print Preview</h3>
-                <p className="text-sm text-gray-500">Label + Packing Slip</p>
+                <h3 className="font-semibold text-gray-900">Print Preview</h3>
+                <p className="text-xs text-gray-500">Label + Packing Slip</p>
               </div>
               <button 
                 onClick={() => setPreviewLabel(null)}
-                className="p-2 hover:bg-gray-100 rounded-lg"
+                className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
             
             {/* Scrollable Content */}
-            <div className="flex-1 overflow-y-auto p-6 bg-gray-100">
-              <div className="space-y-6">
-                {/* Shipping Label */}
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="bg-gray-50 px-4 py-2 border-b flex items-center gap-2">
-                    <Truck className="w-4 h-4 text-blue-600" />
-                    <span className="font-medium text-sm text-gray-700">Shipping Label</span>
-                  </div>
-                  <div className="p-4 flex justify-center bg-white">
-                    <img 
-                      src={`${API_BASE}/api/labels/${previewLabel}`}
-                      alt="Shipping Label"
-                      className="border border-gray-300 rounded shadow-sm"
-                      style={{ transform: 'rotate(90deg)', maxHeight: '350px' }}
-                    />
+            <div className="flex-1 overflow-y-auto">
+              {/* Shipping Label Section */}
+              <div className="border-b border-gray-200">
+                <div className="bg-blue-50 px-4 py-2 flex items-center gap-2 border-b border-blue-100">
+                  <Truck className="w-4 h-4 text-blue-600" />
+                  <span className="font-medium text-sm text-blue-800">Shipping Label</span>
+                </div>
+                <div className="p-4 bg-white flex items-center justify-center min-h-[200px]">
+                  <div className="relative w-full max-w-md mx-auto">
+                    {/* Container for rotated label */}
+                    <div className="aspect-[4/6] w-full flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200 overflow-hidden">
+                      <img 
+                        src={`${API_BASE}/api/labels/${previewLabel}`}
+                        alt="Shipping Label"
+                        className="max-w-full max-h-full object-contain"
+                        style={{ 
+                          transform: 'rotate(90deg)',
+                          maxWidth: '140%',
+                          maxHeight: '140%'
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
-                
-                {/* Packing Slip */}
-                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                  <div className="bg-gray-50 px-4 py-2 border-b flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-green-600" />
-                    <span className="font-medium text-sm text-gray-700">Packing Slip</span>
-                  </div>
-                  <div className="p-4">
-                    <iframe
-                      src={`${API_BASE}/api/labels/${previewLabel}/packing-slip`}
-                      className="w-full border border-gray-200 rounded bg-white"
-                      style={{ height: '500px' }}
-                      title="Packing Slip Preview"
-                    />
-                  </div>
+              </div>
+              
+              {/* Packing Slip Section */}
+              <div>
+                <div className="bg-green-50 px-4 py-2 flex items-center gap-2 border-b border-green-100">
+                  <FileText className="w-4 h-4 text-green-600" />
+                  <span className="font-medium text-sm text-green-800">Packing Slip</span>
+                </div>
+                <div className="bg-white">
+                  <iframe
+                    src={`${API_BASE}/api/labels/${previewLabel}/packing-slip`}
+                    className="w-full border-0"
+                    style={{ height: '400px' }}
+                    title="Packing Slip Preview"
+                  />
                 </div>
               </div>
             </div>
             
             {/* Footer Actions */}
-            <div className="p-4 border-t bg-white flex items-center justify-between flex-shrink-0">
-              <div className="text-sm text-gray-500">
-                Scroll to see both label and packing slip
-              </div>
-              <div className="flex items-center gap-3">
+            <div className="p-3 sm:p-4 border-t bg-gray-50 flex flex-col sm:flex-row items-center justify-between gap-3 flex-shrink-0">
+              <p className="text-xs text-gray-500 hidden sm:block">
+                Scroll to see both documents
+              </p>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
                 <a
                   href={`${API_BASE}/api/labels/${previewLabel}`}
                   download="label.gif"
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700"
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 text-gray-700 text-sm transition-colors"
                 >
                   <Download className="w-4 h-4" />
-                  Download Label
+                  <span className="hidden sm:inline">Download</span>
                 </a>
                 <a
                   href={`${API_BASE}/api/labels/${previewLabel}?format=html`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm transition-colors"
                 >
                   <Printer className="w-4 h-4" />
                   Print Both

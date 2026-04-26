@@ -240,10 +240,11 @@ export default function OrdersPage() {
   })
   const [showFilters, setShowFilters] = useState(false)
 
-  // Auto-Ship state
-  const [autoShipLimit, setAutoShipLimit] = useState<number>(100)
+  // Auto-Ship state — limit 0 = sin límite (todas las órdenes elegibles)
+  const [autoShipLimit, setAutoShipLimit] = useState<number>(0)
   const [autoShipConfirm, setAutoShipConfirm] = useState<{
-    bucket: BucketKey;
+    label: string;
+    bucket: BucketKey | null;  // null = todos los buckets
     orders: Order[];
   } | null>(null)
   const [autoShipping, setAutoShipping] = useState(false)
@@ -1000,7 +1001,36 @@ export default function OrdersPage() {
       return
     }
 
-    setAutoShipConfirm({ bucket, orders: target })
+    setAutoShipConfirm({
+      label: BUCKETS[bucket].label,
+      bucket,
+      orders: target,
+    })
+  }
+
+  // Auto-Ship TODO: prepara todas las órdenes elegibles (todos los buckets auto-ship)
+  function prepareAutoShipAll() {
+    const candidates = orders.filter(o => {
+      const k = orderBucket.get(o.shopifyOrderId)
+      if (!k || !BUCKETS[k].autoShip) return false
+      const cr = pendingChangeRequests[o.orderNumber]
+      if (cr && cr.status !== 'paid') return false
+      return true
+    })
+
+    const limit = autoShipLimit > 0 ? Math.min(autoShipLimit, candidates.length) : candidates.length
+    const target = candidates.slice(0, limit)
+
+    if (target.length === 0) {
+      setError('No hay órdenes elegibles para Auto-Ship')
+      return
+    }
+
+    setAutoShipConfirm({
+      label: 'Todos los buckets auto-ship',
+      bucket: null,
+      orders: target,
+    })
   }
 
   // Auto-Ship: execute after confirmation
@@ -1164,21 +1194,32 @@ export default function OrdersPage() {
           <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
             <Zap className="w-4 h-4 text-amber-500" />
             Auto-Ship por Bucket
-            <span className="ml-2 px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full font-normal">
-              Testing mode
-            </span>
           </h2>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-500">Limit:</label>
-            <input
-              type="number"
-              min={1}
-              max={5000}
-              value={autoShipLimit}
-              onChange={(e) => setAutoShipLimit(Math.max(1, parseInt(e.target.value || '0', 10) || 0))}
-              className="w-20 px-2 py-1 border border-gray-200 rounded text-sm"
-            />
-            <span className="text-xs text-gray-500">órdenes/bucket</span>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Limit:</label>
+              <input
+                type="number"
+                min={0}
+                max={5000}
+                placeholder="Sin límite"
+                value={autoShipLimit || ''}
+                onChange={(e) => setAutoShipLimit(Math.max(0, parseInt(e.target.value || '0', 10) || 0))}
+                className="w-24 px-2 py-1 border border-gray-200 rounded text-sm"
+              />
+              <span className="text-xs text-gray-500">
+                {autoShipLimit > 0 ? 'órdenes/batch' : '(todas)'}
+              </span>
+            </div>
+            <button
+              onClick={prepareAutoShipAll}
+              disabled={autoShipping || shipping}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm font-medium rounded-lg hover:bg-amber-700 disabled:opacity-50"
+              title="Auto-Ship todas las órdenes elegibles de todos los buckets"
+            >
+              <Zap className="w-4 h-4" />
+              Auto-Ship TODO
+            </button>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -2491,7 +2532,7 @@ export default function OrdersPage() {
               </div>
               <div>
                 <h2 className="text-lg font-bold text-gray-900">Confirmar Auto-Ship</h2>
-                <p className="text-sm text-gray-500">{BUCKETS[autoShipConfirm.bucket].label}</p>
+                <p className="text-sm text-gray-500">{autoShipConfirm.label}</p>
               </div>
             </div>
 
@@ -2500,21 +2541,44 @@ export default function OrdersPage() {
                 <span className="text-gray-600">Órdenes a procesar:</span>
                 <span className="font-bold text-gray-900">{autoShipConfirm.orders.length}</span>
               </div>
-              {(() => {
-                const sample = computePackage(autoShipConfirm.orders[0])
-                return (
-                  <>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Peso (1ra orden):</span>
-                      <span className="font-mono text-gray-900">{sample.weight} lb</span>
+              {autoShipConfirm.bucket ? (
+                (() => {
+                  const sample = computePackage(autoShipConfirm.orders[0])
+                  return (
+                    <>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Peso (1ra orden):</span>
+                        <span className="font-mono text-gray-900">{sample.weight} lb</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Caja (1ra orden):</span>
+                        <span className="font-mono text-gray-900">{sample.length}×{sample.width}×{sample.height}&quot;</span>
+                      </div>
+                    </>
+                  )
+                })()
+              ) : (
+                (() => {
+                  const breakdown: Record<string, number> = {}
+                  for (const o of autoShipConfirm.orders) {
+                    const k = orderBucket.get(o.shopifyOrderId)
+                    if (k) breakdown[BUCKETS[k].label] = (breakdown[BUCKETS[k].label] || 0) + 1
+                  }
+                  return (
+                    <div className="pt-1">
+                      <p className="text-gray-600 mb-1.5">Desglose por bucket:</p>
+                      <div className="space-y-1 pl-2">
+                        {Object.entries(breakdown).sort((a, b) => b[1] - a[1]).map(([label, n]) => (
+                          <div key={label} className="flex justify-between text-xs">
+                            <span className="text-gray-700">{label}</span>
+                            <span className="font-mono text-gray-900">{n}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Caja (1ra orden):</span>
-                      <span className="font-mono text-gray-900">{sample.length}×{sample.width}×{sample.height}&quot;</span>
-                    </div>
-                  </>
-                )
-              })()}
+                  )
+                })()
+              )}
               <div className="flex justify-between pt-2 border-t border-gray-200 mt-2">
                 <span className="text-gray-600">Servicio UPS:</span>
                 <span className="text-gray-900">Ground (03)</span>

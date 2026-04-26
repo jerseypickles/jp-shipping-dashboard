@@ -36,9 +36,17 @@ import {
   Send,
   Lock,
   FileEdit,
-  ExternalLink
+  ExternalLink,
+  Zap
 } from 'lucide-react'
 import { getUnfulfilledOrders, buyLabel, buyBatchLabels, getRates } from '@/lib/api'
+import {
+  classifyOrder,
+  computePackage,
+  BUCKETS,
+  BUCKET_ORDER,
+  type BucketKey,
+} from '@/lib/buckets'
 
 interface OrderItem {
   name: string;
@@ -164,6 +172,7 @@ interface Filters {
   weightMin: string;
   weightMax: string;
   hasBYB: 'all' | 'yes' | 'no';
+  bucket: BucketKey | 'all';
 }
 
 const US_STATES = [
@@ -226,14 +235,47 @@ export default function OrdersPage() {
     hasRate: 'all',
     weightMin: '',
     weightMax: '',
-    hasBYB: 'all'
+    hasBYB: 'all',
+    bucket: 'all',
   })
   const [showFilters, setShowFilters] = useState(false)
+
+  // Auto-Ship state
+  const [autoShipLimit, setAutoShipLimit] = useState<number>(100)
+  const [autoShipConfirm, setAutoShipConfirm] = useState<{
+    bucket: BucketKey;
+    orders: Order[];
+  } | null>(null)
+  const [autoShipping, setAutoShipping] = useState(false)
 
   // Count BYB orders
   const bybCount = useMemo(() => {
     return orders.filter(o => isBYBOrder(o.items)).length
   }, [orders])
+
+  // Per-order bucket classification (memoized)
+  const orderBucket = useMemo(() => {
+    const map = new Map<string, BucketKey>()
+    for (const o of orders) {
+      map.set(o.shopifyOrderId, classifyOrder(o))
+    }
+    return map
+  }, [orders])
+
+  // Counts per bucket (over all loaded orders, ignoring other filters)
+  const bucketCounts = useMemo(() => {
+    const counts: Record<BucketKey, number> = {
+      '1-prod': 0, '2-prod': 0, '3-prod': 0, '4-prod': 0, '5-prod': 0, '6-prod': 0, '7+prod': 0,
+      'BYB_4': 0, 'BYB_6': 0, 'BYB_8': 0, 'BYB_12': 0,
+      'BYB2': 0, 'BYB4': 0, 'BYB6': 0,
+      'mixto': 0, 'revisar': 0,
+    }
+    for (const o of orders) {
+      const k = orderBucket.get(o.shopifyOrderId)
+      if (k) counts[k]++
+    }
+    return counts
+  }, [orders, orderBucket])
 
   // Filter orders locally
   const filteredOrders = useMemo(() => {
@@ -306,10 +348,15 @@ export default function OrdersPage() {
         if (filters.hasBYB === 'yes' && !orderHasBYB) return false
         if (filters.hasBYB === 'no' && orderHasBYB) return false
       }
-      
+
+      // Bucket filter
+      if (filters.bucket !== 'all') {
+        if (orderBucket.get(order.shopifyOrderId) !== filters.bucket) return false
+      }
+
       return true
     })
-  }, [orders, filters, rates])
+  }, [orders, filters, rates, orderBucket])
   
   // Count active filters
   const activeFilterCount = useMemo(() => {
@@ -321,6 +368,7 @@ export default function OrdersPage() {
     if (filters.weightMin) count++
     if (filters.weightMax) count++
     if (filters.hasBYB !== 'all') count++
+    if (filters.bucket !== 'all') count++
     return count
   }, [filters])
   
@@ -334,7 +382,8 @@ export default function OrdersPage() {
       hasRate: 'all',
       weightMin: '',
       weightMax: '',
-      hasBYB: 'all'
+      hasBYB: 'all',
+      bucket: 'all',
     })
   }
 
@@ -933,6 +982,88 @@ export default function OrdersPage() {
     }
   }
 
+  // Auto-Ship: prepare confirmation for a bucket (does NOT ship yet)
+  function prepareAutoShip(bucket: BucketKey) {
+    const candidates = orders.filter(o => {
+      if (orderBucket.get(o.shopifyOrderId) !== bucket) return false
+      // Skip blocked orders (pending change requests, not paid)
+      const cr = pendingChangeRequests[o.orderNumber]
+      if (cr && cr.status !== 'paid') return false
+      return true
+    })
+
+    const limit = autoShipLimit > 0 ? Math.min(autoShipLimit, candidates.length) : candidates.length
+    const target = candidates.slice(0, limit)
+
+    if (target.length === 0) {
+      setError(`No hay órdenes elegibles en bucket ${BUCKETS[bucket].label}`)
+      return
+    }
+
+    setAutoShipConfirm({ bucket, orders: target })
+  }
+
+  // Auto-Ship: execute after confirmation
+  async function executeAutoShip() {
+    if (!autoShipConfirm) return
+    const { orders: targetOrders } = autoShipConfirm
+
+    setAutoShipping(true)
+    setError(null)
+    setSuccess(null)
+    setShipResults([])
+
+    try {
+      // Override package on each order using the bucket rules
+      const ordersWithAutoPackage = targetOrders.map(o => ({
+        ...o,
+        package: computePackage(o),
+      }))
+
+      const result = await buyBatchLabels(ordersWithAutoPackage)
+
+      const results: ShipResult[] = []
+      if (result.successful) {
+        result.successful.forEach((s: any) => {
+          results.push({
+            orderNumber: s.orderNumber,
+            trackingNumber: s.trackingNumber,
+            cost: s.cost,
+          })
+        })
+      }
+      if (result.failed) {
+        result.failed.forEach((f: any) => {
+          results.push({
+            orderNumber: f.orderNumber,
+            error: f.error,
+          })
+        })
+      }
+
+      setShipResults(results)
+
+      const successCount = result.summary?.success || result.successful?.length || 0
+      const failedCount = result.summary?.failed || result.failed?.length || 0
+      const totalCost = result.summary?.totalCostFormatted ||
+                        `$${((result.summary?.totalCost || 0) / 100).toFixed(2)}`
+
+      setSuccess(
+        `Auto-Ship: ${successCount} etiquetas creadas` +
+        (failedCount > 0 ? `, ${failedCount} fallaron` : '') +
+        `\nCosto total: ${totalCost}`
+      )
+
+      await loadOrders(currentPage, true)
+      setSelected(new Set())
+      setAutoShipConfirm(null)
+    } catch (err: any) {
+      setError(`Auto-Ship error: ${err.message}`)
+    } finally {
+      setAutoShipping(false)
+    }
+  }
+
   function goToPage(page: number) {
     if (page >= 1 && page <= (pagination?.totalPages || 1)) {
       setSelected(new Set())
@@ -1026,7 +1157,87 @@ export default function OrdersPage() {
           </button>
         </div>
       </div>
-      
+
+      {/* Auto-Ship Bucket Strip */}
+      <div className="mb-6 bg-white border border-gray-200 rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+            <Zap className="w-4 h-4 text-amber-500" />
+            Auto-Ship por Bucket
+            <span className="ml-2 px-2 py-0.5 bg-amber-100 text-amber-700 text-xs rounded-full font-normal">
+              Testing mode
+            </span>
+          </h2>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500">Limit:</label>
+            <input
+              type="number"
+              min={1}
+              max={5000}
+              value={autoShipLimit}
+              onChange={(e) => setAutoShipLimit(Math.max(1, parseInt(e.target.value || '0', 10) || 0))}
+              className="w-20 px-2 py-1 border border-gray-200 rounded text-sm"
+            />
+            <span className="text-xs text-gray-500">órdenes/bucket</span>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {BUCKET_ORDER.filter(k => bucketCounts[k] > 0).map(k => {
+            const info = BUCKETS[k]
+            const count = bucketCounts[k]
+            const active = filters.bucket === k
+            return (
+              <div
+                key={k}
+                className={`flex items-center border rounded-lg overflow-hidden text-sm transition-colors ${
+                  active ? info.chipActive : info.chip
+                }`}
+              >
+                <button
+                  onClick={() => setFilters(prev => ({ ...prev, bucket: prev.bucket === k ? 'all' : k }))}
+                  className="px-3 py-1.5 font-medium"
+                >
+                  {info.label}
+                  <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${active ? 'bg-white/25' : 'bg-white/70'}`}>
+                    {count}
+                  </span>
+                </button>
+                {info.autoShip ? (
+                  <button
+                    onClick={() => prepareAutoShip(k)}
+                    disabled={autoShipping || shipping}
+                    className={`px-2 py-1.5 border-l ${
+                      active ? 'border-white/30 hover:bg-white/15' : 'border-current/20 hover:bg-white/40'
+                    } disabled:opacity-50`}
+                    title={`Auto-Ship hasta ${autoShipLimit} órdenes de este bucket`}
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <span
+                    className="px-2 py-1.5 border-l border-current/20 opacity-60"
+                    title="Revisión manual — sin auto-ship"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                  </span>
+                )}
+              </div>
+            )
+          })}
+          {filters.bucket !== 'all' && (
+            <button
+              onClick={() => setFilters(prev => ({ ...prev, bucket: 'all' }))}
+              className="px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 underline"
+            >
+              Limpiar filtro
+            </button>
+          )}
+          {Object.values(bucketCounts).every(c => c === 0) && (
+            <p className="text-sm text-gray-400 italic">Carga órdenes para ver buckets.</p>
+          )}
+        </div>
+      </div>
+
       {/* Search & Filter Bar */}
       <div className="mb-6 space-y-3">
         {/* Search Row */}
@@ -2265,6 +2476,80 @@ export default function OrdersPage() {
                   Shopify invoice will be sent to: <span className="font-medium text-gray-700">{editingAddress.customer.email}</span>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Auto-Ship Confirmation Modal */}
+      {autoShipConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-lg w-full p-6 shadow-2xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-amber-100 rounded-lg">
+                <Zap className="w-5 h-5 text-amber-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">Confirmar Auto-Ship</h2>
+                <p className="text-sm text-gray-500">{BUCKETS[autoShipConfirm.bucket].label}</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 rounded-lg p-4 space-y-2 mb-4 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Órdenes a procesar:</span>
+                <span className="font-bold text-gray-900">{autoShipConfirm.orders.length}</span>
+              </div>
+              {(() => {
+                const sample = computePackage(autoShipConfirm.orders[0])
+                return (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Peso (1ra orden):</span>
+                      <span className="font-mono text-gray-900">{sample.weight} lb</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Caja (1ra orden):</span>
+                      <span className="font-mono text-gray-900">{sample.length}×{sample.width}×{sample.height}&quot;</span>
+                    </div>
+                  </>
+                )
+              })()}
+              <div className="flex justify-between pt-2 border-t border-gray-200 mt-2">
+                <span className="text-gray-600">Servicio UPS:</span>
+                <span className="text-gray-900">Ground (03)</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-500 mb-4 leading-relaxed">
+              Cada orden tendrá su peso y caja calculados automáticamente según las reglas del bucket. Las órdenes bloqueadas (con change requests pendientes sin pagar) ya fueron excluidas. Esta acción comprará etiquetas reales en UPS.
+            </p>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setAutoShipConfirm(null)}
+                disabled={autoShipping}
+                className="flex-1 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={executeAutoShip}
+                disabled={autoShipping}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-amber-600 text-white font-medium rounded-lg hover:bg-amber-700 disabled:opacity-50"
+              >
+                {autoShipping ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Comprando...
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4" />
+                    Comprar {autoShipConfirm.orders.length} etiquetas
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

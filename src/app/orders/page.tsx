@@ -198,6 +198,8 @@ function isBYBOrder(items: OrderItem[]): boolean {
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([])
+  const [allOrders, setAllOrders] = useState<Order[]>([])
+  const [allOrdersLoading, setAllOrdersLoading] = useState(false)
   const [pagination, setPagination] = useState<Pagination | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
@@ -254,16 +256,17 @@ export default function OrdersPage() {
     return orders.filter(o => isBYBOrder(o.items)).length
   }, [orders])
 
-  // Per-order bucket classification (memoized)
+  // Per-order bucket classification (over the FULL dataset, not just current page)
   const orderBucket = useMemo(() => {
     const map = new Map<string, BucketKey>()
-    for (const o of orders) {
+    const source = allOrders.length > 0 ? allOrders : orders
+    for (const o of source) {
       map.set(o.shopifyOrderId, classifyOrder(o))
     }
     return map
-  }, [orders])
+  }, [allOrders, orders])
 
-  // Counts per bucket (over all loaded orders, ignoring other filters)
+  // Counts per bucket (across all 1,275 orders, not just current page)
   const bucketCounts = useMemo(() => {
     const counts: Record<BucketKey, number> = {
       '1-prod': 0, '2-prod': 0, '3-prod': 0, '4-prod': 0, '5-prod': 0, '6-prod': 0, '7+prod': 0,
@@ -271,16 +274,20 @@ export default function OrdersPage() {
       'BYB2': 0, 'BYB4': 0, 'BYB6': 0,
       'mixto': 0, 'revisar': 0,
     }
-    for (const o of orders) {
+    const source = allOrders.length > 0 ? allOrders : orders
+    for (const o of source) {
       const k = orderBucket.get(o.shopifyOrderId)
       if (k) counts[k]++
     }
     return counts
-  }, [orders, orderBucket])
+  }, [allOrders, orders, orderBucket])
 
   // Filter orders locally
+  // Cuando filter.bucket está activo, opera sobre allOrders (cross-page),
+  // no solo la página cargada — así el usuario ve TODAS las órdenes del bucket.
   const filteredOrders = useMemo(() => {
-    return orders.filter(order => {
+    const source = filters.bucket !== 'all' && allOrders.length > 0 ? allOrders : orders
+    return source.filter(order => {
       // Search filter
       if (filters.search) {
         const searchLower = filters.search.toLowerCase().trim()
@@ -357,7 +364,7 @@ export default function OrdersPage() {
 
       return true
     })
-  }, [orders, filters, rates, orderBucket])
+  }, [orders, allOrders, filters, rates, orderBucket])
   
   // Count active filters
   const activeFilterCount = useMemo(() => {
@@ -422,14 +429,14 @@ export default function OrdersPage() {
   async function loadOrders(page: number = 1, refresh: boolean = false) {
     setLoading(true)
     setError(null)
-    
+
     try {
       // Load orders and change requests in parallel
       const [ordersData] = await Promise.all([
         getUnfulfilledOrders({ page, perPage, refresh }),
         loadPendingChangeRequests()
       ])
-      
+
       setOrders(ordersData.orders || [])
       setPagination(ordersData.pagination || null)
       setCurrentPage(page)
@@ -444,8 +451,32 @@ export default function OrdersPage() {
     }
   }
 
+  // Load ALL pages of orders for accurate bucket counts + Auto-Ship across full dataset
+  async function loadAllOrders(refresh: boolean = false) {
+    setAllOrdersLoading(true)
+    try {
+      const pageSize = 250
+      let collected: Order[] = []
+      let page = 1
+      let totalPages = 1
+      do {
+        const res = await getUnfulfilledOrders({ page, perPage: pageSize, refresh: refresh && page === 1 })
+        if (res.orders) collected = collected.concat(res.orders)
+        totalPages = res.pagination?.totalPages || 1
+        page++
+        if (page > 100) break // safety net
+      } while (page <= totalPages)
+      setAllOrders(collected)
+    } catch (err: any) {
+      console.error('loadAllOrders error:', err)
+    } finally {
+      setAllOrdersLoading(false)
+    }
+  }
+
   useEffect(() => {
     loadOrders(1)
+    loadAllOrders()
   }, [])
 
   function toggleSelect(orderId: string) {
@@ -985,7 +1016,8 @@ export default function OrdersPage() {
 
   // Auto-Ship: prepare confirmation for a bucket (does NOT ship yet)
   function prepareAutoShip(bucket: BucketKey) {
-    const candidates = orders.filter(o => {
+    const source = allOrders.length > 0 ? allOrders : orders
+    const candidates = source.filter(o => {
       if (orderBucket.get(o.shopifyOrderId) !== bucket) return false
       // Skip blocked orders (pending change requests, not paid)
       const cr = pendingChangeRequests[o.orderNumber]
@@ -1010,7 +1042,8 @@ export default function OrdersPage() {
 
   // Auto-Ship TODO: prepara todas las órdenes elegibles (todos los buckets auto-ship)
   function prepareAutoShipAll() {
-    const candidates = orders.filter(o => {
+    const source = allOrders.length > 0 ? allOrders : orders
+    const candidates = source.filter(o => {
       const k = orderBucket.get(o.shopifyOrderId)
       if (!k || !BUCKETS[k].autoShip) return false
       const cr = pendingChangeRequests[o.orderNumber]
@@ -1178,11 +1211,11 @@ export default function OrdersPage() {
             </a>
           )}
           <button
-            onClick={() => loadOrders(1, true)}
-            disabled={loading}
+            onClick={() => { loadOrders(1, true); loadAllOrders(true) }}
+            disabled={loading || allOrdersLoading}
             className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${loading || allOrdersLoading ? 'animate-spin' : ''}`} />
             Sync from Shopify
           </button>
         </div>
@@ -1194,6 +1227,16 @@ export default function OrdersPage() {
           <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
             <Zap className="w-4 h-4 text-amber-500" />
             Auto-Ship por Bucket
+            {allOrdersLoading ? (
+              <span className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full font-normal flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Cargando todas...
+              </span>
+            ) : allOrders.length > 0 ? (
+              <span className="ml-2 px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-normal">
+                {allOrders.length} órdenes clasificadas
+              </span>
+            ) : null}
           </h2>
           <div className="flex items-center gap-3 flex-wrap">
             <div className="flex items-center gap-2">

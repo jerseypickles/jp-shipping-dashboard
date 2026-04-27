@@ -481,7 +481,9 @@ export default function OrdersPage() {
 
   function toggleSelect(orderId: string) {
     // Don't allow selecting orders with pending change requests
-    const order = orders.find(o => o.shopifyOrderId === orderId)
+    // Pull from full dataset so this works for orders not on current page
+    const source = allOrders.length > 0 ? allOrders : orders
+    const order = source.find(o => o.shopifyOrderId === orderId)
     if (order && pendingChangeRequests[order.orderNumber]) {
       const cr = pendingChangeRequests[order.orderNumber]
       if (cr.status !== 'paid') {
@@ -867,11 +869,13 @@ export default function OrdersPage() {
 
   async function handleGetRates() {
     if (selected.size === 0) return
-    
+
     setGettingRates(true)
     setError(null)
-    
-    const selectedOrders = orders.filter(o => selected.has(o.shopifyOrderId))
+
+    // Pull from full dataset so cross-page selections (bucket filter) work
+    const source = allOrders.length > 0 ? allOrders : orders
+    const selectedOrders = source.filter(o => selected.has(o.shopifyOrderId))
     
     const newRates: Record<string, RateInfo> = {}
     selectedOrders.forEach(o => {
@@ -946,8 +950,10 @@ export default function OrdersPage() {
     setShipResults([])
     
     try {
-      const selectedOrders = orders.filter(o => selected.has(o.shopifyOrderId))
-      
+      // Pull from full dataset so cross-page selections (bucket filter) work
+      const source = allOrders.length > 0 ? allOrders : orders
+      const selectedOrders = source.filter(o => selected.has(o.shopifyOrderId))
+
       if (selectedOrders.length === 1) {
         const order = selectedOrders[0]
         const result = await buyLabel(order)
